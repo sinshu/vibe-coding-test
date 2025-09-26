@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ブラウザで遊べる将棋（対CPU）</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: "Noto Sans JP", system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        --board-size: min(80vw, 560px);
+        --square-size: calc(var(--board-size) / 9);
+        background-color: #f9f7f1;
+        color: #222;
+      }
+
+      body {
+        margin: 0;
+        padding: 2rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.5rem;
+        background: radial-gradient(circle at top, #faf8f3, #ede8db);
+        min-height: 100vh;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.8rem, 2.5vw + 1rem, 2.8rem);
+        letter-spacing: 0.08em;
+        text-align: center;
+      }
+
+      #game-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1rem;
+        width: min(95vw, 960px);
+      }
+
+      #board {
+        display: grid;
+        grid-template-columns: repeat(9, var(--square-size));
+        grid-template-rows: repeat(9, var(--square-size));
+        gap: 0;
+        border: 6px solid #b28b55;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #d8b279, #e9c99c);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
+      }
+
+      .square {
+        position: relative;
+        width: var(--square-size);
+        height: var(--square-size);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s ease, transform 0.1s ease;
+        cursor: pointer;
+        user-select: none;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        background: rgba(255, 255, 255, 0.35);
+      }
+
+      .square:nth-child(odd) {
+        background: rgba(255, 255, 255, 0.45);
+      }
+
+      .square.highlight {
+        background: rgba(255, 230, 125, 0.85) !important;
+        transform: scale(1.02);
+      }
+
+      .square.last-move-from {
+        background: rgba(128, 196, 255, 0.75);
+      }
+
+      .square.last-move-to {
+        background: rgba(255, 214, 140, 0.85);
+      }
+
+      .square.capture-target {
+        box-shadow: inset 0 0 0 3px rgba(194, 21, 0, 0.7);
+      }
+
+      #hands {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 1.5rem;
+        width: 100%;
+      }
+
+      .hand {
+        flex: 1 1 260px;
+        background: rgba(255, 255, 255, 0.6);
+        border-radius: 16px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+        padding: 1rem 1.2rem;
+      }
+
+      .hand h2 {
+        margin: 0 0 0.8rem;
+        font-size: 1.1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .pieces {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+        gap: 0.6rem;
+      }
+
+      .piece-button {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.25rem;
+        padding: 0.5rem;
+        border-radius: 12px;
+        border: 2px solid transparent;
+        background: rgba(255, 255, 255, 0.9);
+        cursor: pointer;
+        transition: transform 0.15s ease, border 0.2s ease;
+        font-weight: 600;
+      }
+
+      .piece-button:hover {
+        transform: translateY(-2px);
+        border-color: rgba(198, 92, 40, 0.7);
+      }
+
+      .piece-button.selected {
+        border-color: #d35400;
+        background: rgba(255, 230, 150, 0.8);
+      }
+
+      .piece-button:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+      }
+
+      .piece-button[aria-disabled="true"] {
+        cursor: default;
+        pointer-events: none;
+      }
+
+      .piece-button.empty .piece {
+        filter: grayscale(0.35);
+        opacity: 0.7;
+      }
+
+      .piece-count {
+        font-size: 0.8rem;
+        color: #444;
+      }
+
+      .piece-label {
+        font-size: 0.85rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+
+      .piece {
+        width: calc(var(--square-size) * 0.78);
+        height: calc(var(--square-size) * 0.78);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        color: #4a2f1a;
+        background: linear-gradient(180deg, #f5e1b5, #ddb77d 60%, #c89b61);
+        clip-path: polygon(50% 2%, 96% 32%, 82% 100%, 18% 100%, 4% 32%);
+        box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(0, 0, 0, 0.25);
+        padding-bottom: 6%;
+        text-align: center;
+        user-select: none;
+      }
+
+      .piece-p {
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        font-family: "Noto Sans JP", "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
+      }
+
+      .piece.player-owner {
+        color: #c65c28;
+        background: linear-gradient(180deg, #ffe2c4, #f0b37a 60%, #d08a47);
+      }
+
+      .piece.cpu-owner {
+        color: #4a2f1a;
+        transform: rotate(180deg);
+      }
+
+      .piece.promoted {
+        color: #b71c1c;
+        background: linear-gradient(180deg, #ffd7d1, #f09685 60%, #d0644d);
+      }
+
+      .piece.major {
+        font-size: calc(var(--square-size) * 0.38);
+      }
+
+      .piece:not(.major) {
+        font-size: calc(var(--square-size) * 0.32);
+      }
+
+      .piece.small {
+        width: 54px;
+        height: 54px;
+        font-size: 1.05rem;
+        box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.18);
+      }
+
+      .piece.small.major {
+        font-size: 1.2rem;
+      }
+
+      #message {
+        font-size: 1.1rem;
+        padding: 0.8rem 1.2rem;
+        background: rgba(255, 255, 255, 0.8);
+        border-radius: 12px;
+        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
+        text-align: center;
+        min-height: 2.8rem;
+      }
+
+      #controls {
+        display: flex;
+        gap: 0.8rem;
+      }
+
+      button.control {
+        border: none;
+        padding: 0.7rem 1.2rem;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #f19066, #f5cd79);
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 0.15s ease;
+      }
+
+      button.control:hover {
+        transform: translateY(-1px);
+      }
+
+      @media (max-width: 600px) {
+        body {
+          padding: 1.4rem 0.6rem 2rem;
+        }
+
+        :root {
+          --board-size: min(92vw, 520px);
+        }
+
+        #hands {
+          flex-direction: column;
+          gap: 1rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ブラウザで遊べる対CPU将棋</h1>
+    <div id="game-container">
+      <div id="message">あなたの番です。</div>
+      <div id="board"></div>
+      <div id="hands">
+        <div class="hand" id="cpu-hand">
+          <h2>CPU の持ち駒 <span id="cpu-status"></span></h2>
+          <div class="pieces" id="cpu-pieces"></div>
+        </div>
+        <div class="hand" id="player-hand">
+          <h2>あなたの持ち駒</h2>
+          <div class="pieces" id="player-pieces"></div>
+        </div>
+      </div>
+      <div id="controls">
+        <button class="control" id="restart-button">リスタート</button>
+      </div>
+    </div>
+
+    <script>
+      const SIZE = 9;
+      const PLAYERS = { PLAYER: "black", CPU: "white" };
+      const PROMOTION_ZONE = {
+        black: new Set([0, 1, 2]),
+        white: new Set([6, 7, 8]),
+      };
+      const PROMOTABLE = new Set(["P", "L", "N", "S", "B", "R"]);
+      const PIECE_SYMBOLS = {
+        P: "歩",
+        L: "香",
+        N: "桂",
+        S: "銀",
+        G: "金",
+        B: "角",
+        R: "飛",
+        K: "玉",
+      };
+      const PROMOTED_SYMBOLS = {
+        P: "と",
+        L: "成香",
+        N: "成桂",
+        S: "成銀",
+        B: "馬",
+        R: "龍",
+      };
+      const PIECE_VALUES = {
+        P: 100,
+        L: 300,
+        N: 320,
+        S: 500,
+        G: 600,
+        B: 800,
+        R: 1000,
+        K: 10000,
+      };
+      const PROMOTED_VALUES = {
+        P: 550,
+        L: 550,
+        N: 550,
+        S: 650,
+        B: 1100,
+        R: 1300,
+      };
+
+      const CPU_SEARCH_DEPTH = 3;
+      const MATE_SCORE = 100000;
+      const DRAW_SCORE = 0;
+
+      const MAJOR_PIECES = new Set(["B", "R", "K"]);
+
+      const state = {
+        board: [],
+        hands: {
+          black: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
+          white: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
+        },
+        currentPlayer: PLAYERS.PLAYER,
+        selected: null,
+        winner: null,
+        lastMove: null,
+      };
+
+      const boardEl = document.getElementById("board");
+      const messageEl = document.getElementById("message");
+      const cpuPiecesEl = document.getElementById("cpu-pieces");
+      const playerPiecesEl = document.getElementById("player-pieces");
+      const cpuStatusEl = document.getElementById("cpu-status");
+      const restartButton = document.getElementById("restart-button");
+
+      function createInitialBoard() {
+        const emptyRow = () => Array.from({ length: SIZE }, () => null);
+        const board = Array.from({ length: SIZE }, emptyRow);
+
+        const place = (row, col, piece, owner, promoted = false) => {
+          board[row][col] = { piece, owner, promoted };
+        };
+
+        // CPU side (white)
+        const white = PLAYERS.CPU;
+        place(0, 0, "L", white);
+        place(0, 1, "N", white);
+        place(0, 2, "S", white);
+        place(0, 3, "G", white);
+        place(0, 4, "K", white);
+        place(0, 5, "G", white);
+        place(0, 6, "S", white);
+        place(0, 7, "N", white);
+        place(0, 8, "L", white);
+        place(1, 1, "R", white);
+        place(1, 7, "B", white);
+        for (let col = 0; col < SIZE; col++) {
+          place(2, col, "P", white);
+        }
+
+        // Player side (black)
+        const black = PLAYERS.PLAYER;
+        place(8, 0, "L", black);
+        place(8, 1, "N", black);
+        place(8, 2, "S", black);
+        place(8, 3, "G", black);
+        place(8, 4, "K", black);
+        place(8, 5, "G", black);
+        place(8, 6, "S", black);
+        place(8, 7, "N", black);
+        place(8, 8, "L", black);
+        place(7, 7, "R", black);
+        place(7, 1, "B", black);
+        for (let col = 0; col < SIZE; col++) {
+          place(6, col, "P", black);
+        }
+
+        return board;
+      }
+
+      function cloneBoard(board) {
+        return board.map((row) =>
+          row.map((cell) =>
+            cell ? { piece: cell.piece, owner: cell.owner, promoted: cell.promoted } : null
+          )
+        );
+      }
+
+      function cloneHands(hands) {
+        return {
+          black: { ...hands.black },
+          white: { ...hands.white },
+        };
+      }
+
+      function resetGame() {
+        state.board = createInitialBoard();
+        state.hands = {
+          black: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
+          white: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
+        };
+        state.currentPlayer = PLAYERS.PLAYER;
+        state.selected = null;
+        state.winner = null;
+        state.lastMove = null;
+        messageEl.textContent = "あなたの番です。";
+        render();
+      }
+
+      function inBounds(row, col) {
+        return row >= 0 && row < SIZE && col >= 0 && col < SIZE;
+      }
+
+      function getDisplaySymbol(piece) {
+        if (!piece) return "";
+        if (piece.promoted) {
+          return PROMOTED_SYMBOLS[piece.piece] || PIECE_SYMBOLS[piece.piece] || "";
+        }
+        return PIECE_SYMBOLS[piece.piece] || "";
+      }
+
+      function createPieceElement(pieceData, { size = "board" } = {}) {
+        const owner = pieceData.owner || PLAYERS.PLAYER;
+        const element = document.createElement("div");
+        element.classList.add("piece");
+        if (pieceData.piece) {
+          element.classList.add(`piece-${pieceData.piece.toLowerCase()}`);
+        }
+        if (size === "hand") {
+          element.classList.add("small");
+        }
+        if (pieceData.promoted) {
+          element.classList.add("promoted");
+        }
+        if (MAJOR_PIECES.has(pieceData.piece)) {
+          element.classList.add("major");
+        }
+        element.classList.add(owner === PLAYERS.PLAYER ? "player-owner" : "cpu-owner");
+        element.textContent = getDisplaySymbol(pieceData);
+        return element;
+      }
+
+      function forwardDirection(owner) {
+        return owner === PLAYERS.PLAYER ? -1 : 1;
+      }
+
+      function getGoldOffsets(owner) {
+        const forward = forwardDirection(owner);
+        return [
+          [forward, -1],
+          [forward, 0],
+          [forward, 1],
+          [0, -1],
+          [0, 1],
+          [-forward, 0],
+        ];
+      }
+
+      function getSilverOffsets(owner) {
+        const forward = forwardDirection(owner);
+        return [
+          [forward, -1],
+          [forward, 0],
+          [forward, 1],
+          [-forward, -1],
+          [-forward, 1],
+        ];
+      }
+
+      function getKnightMoves(owner) {
+        const forward = forwardDirection(owner);
+        return [
+          [2 * forward, -1],
+          [2 * forward, 1],
+        ];
+      }
+
+      function getPromotedPieceValue(piece) {
+        return PROMOTED_VALUES[piece] ?? PIECE_VALUES[piece];
+      }
+
+      function getPieceValue(piece, promoted) {
+        return promoted ? getPromotedPieceValue(piece) : PIECE_VALUES[piece];
+      }
+
+      function promotionZone(owner, row) {
+        return PROMOTION_ZONE[owner].has(row);
+      }
+
+      function isPromotionMandatory(piece, owner, toRow) {
+        if (piece === "P" || piece === "L") {
+          return (owner === PLAYERS.PLAYER && toRow === 0) || (owner === PLAYERS.CPU && toRow === 8);
+        }
+        if (piece === "N") {
+          return (
+            (owner === PLAYERS.PLAYER && (toRow === 0 || toRow === 1)) ||
+            (owner === PLAYERS.CPU && (toRow === 8 || toRow === 7))
+          );
+        }
+        return false;
+      }
+
+      function promotionAvailable(piece, owner, fromRow, toRow, alreadyPromoted) {
+        if (alreadyPromoted) return false;
+        if (!PROMOTABLE.has(piece)) return false;
+        return promotionZone(owner, fromRow) || promotionZone(owner, toRow);
+      }
+
+      function addMove(moves, move, stateSnapshot) {
+        const nextState = applyMove(stateSnapshot, move);
+        if (!isKingInCheck(nextState, move.player)) {
+          moves.push(move);
+        }
+      }
+
+      function applyMove(currentState, move) {
+        const nextBoard = cloneBoard(currentState.board);
+        const nextHands = cloneHands(currentState.hands);
+
+        if (move.drop) {
+          const { to, piece, player } = move;
+          nextBoard[to.row][to.col] = { piece, owner: player, promoted: false };
+          nextHands[player][piece] -= 1;
+        } else {
+          const { from, to, promote, player } = move;
+          const movingPiece = { ...nextBoard[from.row][from.col] };
+          nextBoard[from.row][from.col] = null;
+
+          if (nextBoard[to.row][to.col]) {
+            const captured = nextBoard[to.row][to.col];
+            const basePiece = captured.piece;
+            if (basePiece !== "K") {
+              nextHands[player][basePiece] += 1;
+            }
+          }
+
+          const shouldPromote = promote && PROMOTABLE.has(movingPiece.piece);
+          movingPiece.promoted = shouldPromote ? true : movingPiece.promoted;
+
+          nextBoard[to.row][to.col] = movingPiece;
+        }
+
+        return {
+          board: nextBoard,
+          hands: nextHands,
+        };
+      }
+
+      function getAttackTargets(board, row, col, owner) {
+        const piece = board[row][col];
+        if (!piece || piece.owner !== owner) return [];
+        const targets = [];
+        const base = piece.piece;
+        const promoted = piece.promoted;
+        const forward = forwardDirection(owner);
+
+        const addStep = (dr, dc) => {
+          const r = row + dr;
+          const c = col + dc;
+          if (!inBounds(r, c)) return;
+          const target = board[r][c];
+          if (target && target.owner === owner) return;
+          targets.push({ row: r, col: c });
+        };
+
+        const addSliding = (directions) => {
+          for (const [dr, dc] of directions) {
+            let r = row + dr;
+            let c = col + dc;
+            while (inBounds(r, c)) {
+              const target = board[r][c];
+              if (target) {
+                if (target.owner !== owner) {
+                  targets.push({ row: r, col: c });
+                }
+                break;
+              } else {
+                targets.push({ row: r, col: c });
+              }
+              r += dr;
+              c += dc;
+            }
+          }
+        };
+
+        if (promoted && ["P", "L", "N", "S"].includes(base)) {
+          getGoldOffsets(owner).forEach(([dr, dc]) => addStep(dr, dc));
+          return targets;
+        }
+
+        if (promoted && base === "B") {
+          addSliding([
+            [1, 1],
+            [1, -1],
+            [-1, 1],
+            [-1, -1],
+          ]);
+          [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+          ].forEach(([dr, dc]) => addStep(dr, dc));
+          return targets;
+        }
+
+        if (promoted && base === "R") {
+          addSliding([
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+          ]);
+          [
+            [1, 1],
+            [1, -1],
+            [-1, 1],
+            [-1, -1],
+          ].forEach(([dr, dc]) => addStep(dr, dc));
+          return targets;
+        }
+
+        switch (base) {
+          case "P":
+            addStep(forward, 0);
+            break;
+          case "L":
+            addSliding([[forward, 0]]);
+            break;
+          case "N":
+            getKnightMoves(owner).forEach(([dr, dc]) => addStep(dr, dc));
+            break;
+          case "S":
+            getSilverOffsets(owner).forEach(([dr, dc]) => addStep(dr, dc));
+            break;
+          case "G":
+            getGoldOffsets(owner).forEach(([dr, dc]) => addStep(dr, dc));
+            break;
+          case "B":
+            addSliding([
+              [1, 1],
+              [1, -1],
+              [-1, 1],
+              [-1, -1],
+            ]);
+            break;
+          case "R":
+            addSliding([
+              [1, 0],
+              [-1, 0],
+              [0, 1],
+              [0, -1],
+            ]);
+            break;
+          case "K":
+            [
+              [1, 0],
+              [-1, 0],
+              [0, 1],
+              [0, -1],
+              [1, 1],
+              [1, -1],
+              [-1, 1],
+              [-1, -1],
+            ].forEach(([dr, dc]) => addStep(dr, dc));
+            break;
+        }
+
+        return targets;
+      }
+
+      function isSquareAttacked(board, hands, squareRow, squareCol, byPlayer) {
+        for (let row = 0; row < SIZE; row++) {
+          for (let col = 0; col < SIZE; col++) {
+            const piece = board[row][col];
+            if (!piece || piece.owner !== byPlayer) continue;
+            const attacks = getAttackTargets(board, row, col, byPlayer);
+            if (attacks.some((sq) => sq.row === squareRow && sq.col === squareCol)) {
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+
+      function findKing(board, owner) {
+        for (let r = 0; r < SIZE; r++) {
+          for (let c = 0; c < SIZE; c++) {
+            const piece = board[r][c];
+            if (piece && piece.owner === owner && piece.piece === "K") {
+              return { row: r, col: c };
+            }
+          }
+        }
+        return null;
+      }
+
+      function isKingInCheck(stateSnapshot, player) {
+        const kingPos = findKing(stateSnapshot.board, player);
+        if (!kingPos) return true;
+        const opponent = player === PLAYERS.PLAYER ? PLAYERS.CPU : PLAYERS.PLAYER;
+        return isSquareAttacked(stateSnapshot.board, stateSnapshot.hands, kingPos.row, kingPos.col, opponent);
+      }
+
+      function generateMovesForPiece(stateSnapshot, row, col, owner) {
+        const piece = stateSnapshot.board[row][col];
+        const moves = [];
+        if (!piece || piece.owner !== owner) return moves;
+
+        const forward = forwardDirection(owner);
+        const base = piece.piece;
+
+        const addStandardMove = (toRow, toCol) => {
+          if (!inBounds(toRow, toCol)) return;
+          const target = stateSnapshot.board[toRow][toCol];
+          if (target && target.owner === owner) return;
+          const isCapture = !!target;
+
+          const mandatory = isPromotionMandatory(base, owner, toRow);
+          const canPromote = promotionAvailable(base, owner, row, toRow, piece.promoted);
+
+          if (mandatory) {
+            const move = { from: { row, col }, to: { row: toRow, col: toCol }, promote: true, player: owner };
+            addMove(moves, move, stateSnapshot);
+            return;
+          }
+
+          if (piece.promoted || !canPromote) {
+            const move = { from: { row, col }, to: { row: toRow, col: toCol }, promote: false, player: owner };
+            addMove(moves, move, stateSnapshot);
+          } else {
+            const promoteMove = { from: { row, col }, to: { row: toRow, col: toCol }, promote: true, player: owner };
+            const nonPromoteMove = { from: { row, col }, to: { row: toRow, col: toCol }, promote: false, player: owner };
+            addMove(moves, promoteMove, stateSnapshot);
+            addMove(moves, nonPromoteMove, stateSnapshot);
+          }
+        };
+
+        const addSlidingMoves = (directions) => {
+          for (const [dr, dc] of directions) {
+            let r = row + dr;
+            let c = col + dc;
+            while (inBounds(r, c)) {
+              const target = stateSnapshot.board[r][c];
+              if (target) {
+                if (target.owner !== owner) {
+                  addStandardMove(r, c);
+                }
+                break;
+              } else {
+                addStandardMove(r, c);
+              }
+              r += dr;
+              c += dc;
+            }
+          }
+        };
+
+        if (piece.promoted) {
+          if (["P", "L", "N", "S"].includes(base)) {
+            const goldOffsets = getGoldOffsets(owner);
+            goldOffsets.forEach(([dr, dc]) => addStandardMove(row + dr, col + dc));
+            return moves;
+          }
+          if (base === "B") {
+            addSlidingMoves([
+              [1, 1],
+              [1, -1],
+              [-1, 1],
+              [-1, -1],
+            ]);
+            const kingOffsets = [
+              [1, 0],
+              [-1, 0],
+              [0, 1],
+              [0, -1],
+            ];
+            kingOffsets.forEach(([dr, dc]) => addStandardMove(row + dr, col + dc));
+            return moves;
+          }
+          if (base === "R") {
+            addSlidingMoves([
+              [1, 0],
+              [-1, 0],
+              [0, 1],
+              [0, -1],
+            ]);
+            const diagonals = [
+              [1, 1],
+              [1, -1],
+              [-1, 1],
+              [-1, -1],
+            ];
+            diagonals.forEach(([dr, dc]) => addStandardMove(row + dr, col + dc));
+            return moves;
+          }
+        }
+
+        switch (base) {
+          case "P":
+            addStandardMove(row + forward, col);
+            break;
+          case "L":
+            addSlidingMoves([[forward, 0]]);
+            break;
+          case "N":
+            getKnightMoves(owner).forEach(([dr, dc]) => addStandardMove(row + dr, col + dc));
+            break;
+          case "S":
+            getSilverOffsets(owner).forEach(([dr, dc]) => addStandardMove(row + dr, col + dc));
+            break;
+          case "G":
+            getGoldOffsets(owner).forEach(([dr, dc]) => addStandardMove(row + dr, col + dc));
+            break;
+          case "B":
+            addSlidingMoves([
+              [1, 1],
+              [1, -1],
+              [-1, 1],
+              [-1, -1],
+            ]);
+            break;
+          case "R":
+            addSlidingMoves([
+              [1, 0],
+              [-1, 0],
+              [0, 1],
+              [0, -1],
+            ]);
+            break;
+          case "K":
+            [
+              [1, 0],
+              [-1, 0],
+              [0, 1],
+              [0, -1],
+              [1, 1],
+              [1, -1],
+              [-1, 1],
+              [-1, -1],
+            ].forEach(([dr, dc]) => addStandardMove(row + dr, col + dc));
+            break;
+        }
+
+        return moves;
+      }
+
+      function generateDropMoves(stateSnapshot, owner) {
+        const moves = [];
+        const hand = stateSnapshot.hands[owner];
+        for (const piece of Object.keys(hand)) {
+          if (hand[piece] <= 0) continue;
+          for (let row = 0; row < SIZE; row++) {
+            for (let col = 0; col < SIZE; col++) {
+              if (stateSnapshot.board[row][col]) continue;
+              if (!canDropPiece(owner, piece, row, col, stateSnapshot)) continue;
+              const move = {
+                drop: true,
+                piece,
+                to: { row, col },
+                player: owner,
+              };
+              addMove(moves, move, stateSnapshot);
+            }
+          }
+        }
+        return moves;
+      }
+
+      function canDropPiece(owner, piece, row, col, stateSnapshot) {
+        if (piece === "P") {
+          if ((owner === PLAYERS.PLAYER && row === 0) || (owner === PLAYERS.CPU && row === 8)) return false;
+          for (let r = 0; r < SIZE; r++) {
+            const existing = stateSnapshot.board[r][col];
+            if (existing && existing.owner === owner && existing.piece === "P" && !existing.promoted) {
+              return false;
+            }
+          }
+        }
+        if (piece === "L") {
+          if ((owner === PLAYERS.PLAYER && row === 0) || (owner === PLAYERS.CPU && row === 8)) return false;
+        }
+        if (piece === "N") {
+          if ((owner === PLAYERS.PLAYER && row <= 1) || (owner === PLAYERS.CPU && row >= 7)) return false;
+        }
+        return true;
+      }
+
+      function generateLegalMoves(stateSnapshot, owner) {
+        let moves = [];
+        for (let row = 0; row < SIZE; row++) {
+          for (let col = 0; col < SIZE; col++) {
+            const piece = stateSnapshot.board[row][col];
+            if (!piece || piece.owner !== owner) continue;
+            const pieceMoves = generateMovesForPiece(stateSnapshot, row, col, owner);
+            moves = moves.concat(pieceMoves);
+          }
+        }
+        moves = moves.concat(generateDropMoves(stateSnapshot, owner));
+        return moves;
+      }
+
+      function evaluate(stateSnapshot) {
+        let total = 0;
+        for (let row = 0; row < SIZE; row++) {
+          for (let col = 0; col < SIZE; col++) {
+            const piece = stateSnapshot.board[row][col];
+            if (!piece) continue;
+            const value = getPieceValue(piece.piece, piece.promoted);
+            total += piece.owner === PLAYERS.PLAYER ? value : -value;
+          }
+        }
+        const handPieces = Object.keys(stateSnapshot.hands.black);
+        for (const piece of handPieces) {
+          total += stateSnapshot.hands.black[piece] * PIECE_VALUES[piece] * 0.6;
+          total -= stateSnapshot.hands.white[piece] * PIECE_VALUES[piece] * 0.6;
+        }
+        return total;
+      }
+
+      function minimax(stateSnapshot, depth, currentPlayer, alpha, beta) {
+        if (depth === 0) {
+          return evaluate(stateSnapshot);
+        }
+
+        const moves = generateLegalMoves(stateSnapshot, currentPlayer);
+        if (moves.length === 0) {
+          if (isKingInCheck(stateSnapshot, currentPlayer)) {
+            return currentPlayer === PLAYERS.PLAYER ? -MATE_SCORE : MATE_SCORE;
+          }
+          return DRAW_SCORE;
+        }
+
+        if (currentPlayer === PLAYERS.PLAYER) {
+          let value = -Infinity;
+          for (const move of moves) {
+            const applied = applyMove(stateSnapshot, move);
+            const score = minimax(applied, depth - 1, PLAYERS.CPU, alpha, beta);
+            value = Math.max(value, score);
+            alpha = Math.max(alpha, value);
+            if (beta <= alpha) break;
+          }
+          return value;
+        } else {
+          let value = Infinity;
+          for (const move of moves) {
+            const applied = applyMove(stateSnapshot, move);
+            const score = minimax(applied, depth - 1, PLAYERS.PLAYER, alpha, beta);
+            value = Math.min(value, score);
+            beta = Math.min(beta, value);
+            if (beta <= alpha) break;
+          }
+          return value;
+        }
+      }
+
+      function chooseCpuMove(stateSnapshot) {
+        const moves = generateLegalMoves(stateSnapshot, PLAYERS.CPU);
+        if (moves.length === 0) return null;
+
+        let bestScore = Infinity;
+        let bestMoves = [];
+
+        for (const move of moves) {
+          const applied = applyMove(stateSnapshot, move);
+          const score = minimax(applied, CPU_SEARCH_DEPTH - 1, PLAYERS.PLAYER, -Infinity, Infinity);
+          if (score < bestScore - 1e-6) {
+            bestScore = score;
+            bestMoves = [move];
+          } else if (Math.abs(score - bestScore) < 1e-6) {
+            bestMoves.push(move);
+          }
+        }
+
+        return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+      }
+
+      function makeMove(move) {
+        const applied = applyMove(state, move);
+        state.lastMove = move.drop
+          ? {
+              drop: true,
+              piece: move.piece,
+              player: move.player,
+              to: { ...move.to },
+            }
+          : {
+              drop: false,
+              player: move.player,
+              from: { ...move.from },
+              to: { ...move.to },
+              promote: !!move.promote,
+            };
+        state.board = applied.board;
+        state.hands = applied.hands;
+        state.selected = null;
+        state.currentPlayer = state.currentPlayer === PLAYERS.PLAYER ? PLAYERS.CPU : PLAYERS.PLAYER;
+        render();
+      }
+
+      function tryPlayerMove(move) {
+        if (state.currentPlayer !== PLAYERS.PLAYER || state.winner) return;
+        makeMove(move);
+        if (checkForWinner()) return;
+        messageEl.textContent = "CPU が考えています...";
+        setTimeout(cpuTurn, 400);
+      }
+
+      function cpuTurn() {
+        if (state.winner) return;
+        const move = chooseCpuMove(state);
+        if (!move) {
+          state.winner = PLAYERS.PLAYER;
+          messageEl.textContent = "詰み！あなたの勝ちです。";
+          render();
+          return;
+        }
+        makeMove(move);
+        if (checkForWinner()) return;
+        messageEl.textContent = "あなたの番です。";
+      }
+
+      function checkForWinner() {
+        const current = state.currentPlayer;
+        const moves = generateLegalMoves(state, current);
+        if (moves.length === 0) {
+          const inCheck = isKingInCheck(state, current);
+          state.winner = inCheck ? (current === PLAYERS.PLAYER ? PLAYERS.CPU : PLAYERS.PLAYER) : "draw";
+          if (state.winner === PLAYERS.PLAYER) {
+            messageEl.textContent = "詰み！あなたの勝ちです。";
+          } else if (state.winner === PLAYERS.CPU) {
+            messageEl.textContent = "詰み！CPUの勝ちです。";
+          } else {
+            messageEl.textContent = "千日手です。";
+          }
+          render();
+          return true;
+        }
+        return false;
+      }
+
+      function renderBoard() {
+        boardEl.innerHTML = "";
+        for (let row = 0; row < SIZE; row++) {
+          for (let col = 0; col < SIZE; col++) {
+            const square = document.createElement("div");
+            square.className = "square";
+            square.dataset.row = row;
+            square.dataset.col = col;
+            const piece = state.board[row][col];
+            if (piece) {
+              const pieceNode = createPieceElement(piece);
+              square.appendChild(pieceNode);
+            }
+
+            if (state.lastMove) {
+              const lastMove = state.lastMove;
+              if (!lastMove.drop && lastMove.from && lastMove.from.row === row && lastMove.from.col === col) {
+                square.classList.add("last-move-from");
+              }
+              if (lastMove.to && lastMove.to.row === row && lastMove.to.col === col) {
+                square.classList.add("last-move-to");
+              }
+            }
+
+            if (state.selected) {
+              if (state.selected.type === "board") {
+                const isSelectedSquare = state.selected.from.row === row && state.selected.from.col === col;
+                const legal = state.selected.moves.filter((m) => m.to.row === row && m.to.col === col);
+                if (isSelectedSquare || legal.length) {
+                  square.classList.add("highlight");
+                }
+                if (legal.some((m) => state.board[row][col])) {
+                  square.classList.add("capture-target");
+                }
+              } else if (state.selected.type === "drop") {
+                const legal = state.selected.moves.filter((m) => m.to.row === row && m.to.col === col);
+                if (legal.length) {
+                  square.classList.add("highlight");
+                }
+              }
+            }
+
+            square.addEventListener("click", () => onSquareClick(row, col));
+            boardEl.appendChild(square);
+          }
+        }
+      }
+
+      function renderHands() {
+        const createHandButtons = (handEl, owner, isPlayer) => {
+          handEl.innerHTML = "";
+          for (const piece of Object.keys(state.hands[owner])) {
+            const count = state.hands[owner][piece];
+            const button = document.createElement("button");
+            button.className = "piece-button";
+            button.type = "button";
+            const pieceNode = createPieceElement(
+              { piece, owner, promoted: false },
+              { size: "hand" }
+            );
+            const label = document.createElement("div");
+            label.className = "piece-label";
+            label.textContent = PIECE_SYMBOLS[piece];
+            const countEl = document.createElement("div");
+            countEl.className = "piece-count";
+            countEl.textContent = `× ${count}`;
+
+            button.appendChild(pieceNode);
+            button.appendChild(label);
+            button.appendChild(countEl);
+
+            if (count <= 0) {
+              button.classList.add("empty");
+            }
+            if (isPlayer) {
+              button.disabled = count <= 0;
+              if (
+                state.selected &&
+                state.selected.type === "drop" &&
+                state.selected.piece === piece
+              ) {
+                button.classList.add("selected");
+              }
+              button.addEventListener("click", () => onHandPieceClick(piece));
+            } else {
+              button.setAttribute("aria-disabled", "true");
+              button.tabIndex = -1;
+            }
+            handEl.appendChild(button);
+          }
+          if (!isPlayer) {
+            const total = Object.values(state.hands[owner]).reduce((a, b) => a + b, 0);
+            cpuStatusEl.textContent = `合計 ${total} 枚`;
+          }
+        };
+
+        createHandButtons(cpuPiecesEl, PLAYERS.CPU, false);
+        createHandButtons(playerPiecesEl, PLAYERS.PLAYER, true);
+      }
+
+      function onSquareClick(row, col) {
+        if (state.winner) return;
+        const piece = state.board[row][col];
+        if (state.selected && state.selected.type === "board") {
+          const selectedMove = state.selected.moves.filter(
+            (m) => m.to.row === row && m.to.col === col
+          );
+          if (selectedMove.length) {
+            if (selectedMove.length === 1) {
+              tryPlayerMove(selectedMove[0]);
+            } else {
+              const promoteMove = selectedMove.find((m) => m.promote);
+              const nonPromoteMove = selectedMove.find((m) => !m.promote);
+              const shouldPromote = window.confirm("成りますか？");
+              tryPlayerMove(shouldPromote ? promoteMove : nonPromoteMove);
+            }
+            return;
+          }
+        }
+
+        if (state.selected && state.selected.type === "drop") {
+          const move = state.selected.moves.find((m) => m.to.row === row && m.to.col === col);
+          if (move) {
+            tryPlayerMove(move);
+            return;
+          }
+        }
+
+        if (piece && piece.owner === PLAYERS.PLAYER && state.currentPlayer === PLAYERS.PLAYER) {
+          const moves = generateMovesForPiece(state, row, col, PLAYERS.PLAYER);
+          state.selected = { type: "board", from: { row, col }, moves };
+        } else {
+          state.selected = null;
+        }
+        render();
+      }
+
+      function onHandPieceClick(piece) {
+        if (state.currentPlayer !== PLAYERS.PLAYER || state.winner) return;
+        if (state.selected && state.selected.type === "drop" && state.selected.piece === piece) {
+          state.selected = null;
+          render();
+          return;
+        }
+        const moves = generateDropMoves(state, PLAYERS.PLAYER).filter((m) => m.piece === piece);
+        state.selected = { type: "drop", piece, moves };
+        render();
+      }
+
+      function render() {
+        renderBoard();
+        renderHands();
+      }
+
+      restartButton.addEventListener("click", resetGame);
+
+      resetGame();
+    </script>
+  </body>
+</html>
