@@ -320,6 +320,10 @@
         R: 1300,
       };
 
+      const CPU_SEARCH_DEPTH = 3;
+      const MATE_SCORE = 100000;
+      const DRAW_SCORE = 0;
+
       const MAJOR_PIECES = new Set(["B", "R", "K"]);
 
       const state = {
@@ -921,19 +925,52 @@
         return total;
       }
 
+      function minimax(stateSnapshot, depth, currentPlayer, alpha, beta) {
+        if (depth === 0) {
+          return evaluate(stateSnapshot);
+        }
+
+        const moves = generateLegalMoves(stateSnapshot, currentPlayer);
+        if (moves.length === 0) {
+          if (isKingInCheck(stateSnapshot, currentPlayer)) {
+            return currentPlayer === PLAYERS.PLAYER ? -MATE_SCORE : MATE_SCORE;
+          }
+          return DRAW_SCORE;
+        }
+
+        if (currentPlayer === PLAYERS.PLAYER) {
+          let value = -Infinity;
+          for (const move of moves) {
+            const applied = applyMove(stateSnapshot, move);
+            const score = minimax(applied, depth - 1, PLAYERS.CPU, alpha, beta);
+            value = Math.max(value, score);
+            alpha = Math.max(alpha, value);
+            if (beta <= alpha) break;
+          }
+          return value;
+        } else {
+          let value = Infinity;
+          for (const move of moves) {
+            const applied = applyMove(stateSnapshot, move);
+            const score = minimax(applied, depth - 1, PLAYERS.PLAYER, alpha, beta);
+            value = Math.min(value, score);
+            beta = Math.min(beta, value);
+            if (beta <= alpha) break;
+          }
+          return value;
+        }
+      }
+
       function chooseCpuMove(stateSnapshot) {
         const moves = generateLegalMoves(stateSnapshot, PLAYERS.CPU);
         if (moves.length === 0) return null;
+
         let bestScore = Infinity;
         let bestMoves = [];
 
         for (const move of moves) {
           const applied = applyMove(stateSnapshot, move);
-          const nextState = {
-            board: applied.board,
-            hands: applied.hands,
-          };
-          const score = evaluate(nextState);
+          const score = minimax(applied, CPU_SEARCH_DEPTH - 1, PLAYERS.PLAYER, -Infinity, Infinity);
           if (score < bestScore - 1e-6) {
             bestScore = score;
             bestMoves = [move];
@@ -941,6 +978,7 @@
             bestMoves.push(move);
           }
         }
+
         return bestMoves[Math.floor(Math.random() * bestMoves.length)];
       }
 
