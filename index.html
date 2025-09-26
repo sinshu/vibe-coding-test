@@ -74,6 +74,14 @@
         transform: scale(1.02);
       }
 
+      .square.last-move-from {
+        background: rgba(128, 196, 255, 0.75);
+      }
+
+      .square.last-move-to {
+        background: rgba(255, 214, 140, 0.85);
+      }
+
       .square.capture-target {
         box-shadow: inset 0 0 0 3px rgba(194, 21, 0, 0.7);
       }
@@ -174,6 +182,12 @@
         padding-bottom: 6%;
         text-align: center;
         user-select: none;
+      }
+
+      .piece-p {
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        font-family: "Noto Sans JP", "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
       }
 
       .piece.player-owner {
@@ -335,6 +349,7 @@
         currentPlayer: PLAYERS.PLAYER,
         selected: null,
         winner: null,
+        lastMove: null,
       };
 
       const boardEl = document.getElementById("board");
@@ -413,6 +428,7 @@
         state.currentPlayer = PLAYERS.PLAYER;
         state.selected = null;
         state.winner = null;
+        state.lastMove = null;
         messageEl.textContent = "あなたの番です。";
         render();
       }
@@ -433,6 +449,9 @@
         const owner = pieceData.owner || PLAYERS.PLAYER;
         const element = document.createElement("div");
         element.classList.add("piece");
+        if (pieceData.piece) {
+          element.classList.add(`piece-${pieceData.piece.toLowerCase()}`);
+        }
         if (size === "hand") {
           element.classList.add("small");
         }
@@ -984,6 +1003,20 @@
 
       function makeMove(move) {
         const applied = applyMove(state, move);
+        state.lastMove = move.drop
+          ? {
+              drop: true,
+              piece: move.piece,
+              player: move.player,
+              to: { ...move.to },
+            }
+          : {
+              drop: false,
+              player: move.player,
+              from: { ...move.from },
+              to: { ...move.to },
+              promote: !!move.promote,
+            };
         state.board = applied.board;
         state.hands = applied.hands;
         state.selected = null;
@@ -1044,6 +1077,16 @@
             if (piece) {
               const pieceNode = createPieceElement(piece);
               square.appendChild(pieceNode);
+            }
+
+            if (state.lastMove) {
+              const lastMove = state.lastMove;
+              if (!lastMove.drop && lastMove.from && lastMove.from.row === row && lastMove.from.col === col) {
+                square.classList.add("last-move-from");
+              }
+              if (lastMove.to && lastMove.to.row === row && lastMove.to.col === col) {
+                square.classList.add("last-move-to");
+              }
             }
 
             if (state.selected) {
