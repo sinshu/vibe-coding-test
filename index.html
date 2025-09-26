@@ -58,8 +58,6 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: calc(var(--square-size) * 0.5);
-        font-weight: 700;
         transition: background 0.2s ease, transform 0.1s ease;
         cursor: pointer;
         user-select: none;
@@ -69,19 +67,6 @@
 
       .square:nth-child(odd) {
         background: rgba(255, 255, 255, 0.45);
-      }
-
-      .square.cpu-piece {
-        color: #4a2f1a;
-      }
-
-      .square.player-piece {
-        color: #c65c28;
-      }
-
-      .square.promoted {
-        color: #c62828;
-        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
       }
 
       .square.highlight {
@@ -128,7 +113,7 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 0.2rem;
+        gap: 0.25rem;
         padding: 0.5rem;
         border-radius: 12px;
         border: 2px solid transparent;
@@ -148,9 +133,81 @@
         background: rgba(255, 230, 150, 0.8);
       }
 
+      .piece-button:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+      }
+
+      .piece-button[aria-disabled="true"] {
+        cursor: default;
+        pointer-events: none;
+      }
+
+      .piece-button.empty .piece {
+        filter: grayscale(0.35);
+        opacity: 0.7;
+      }
+
       .piece-count {
         font-size: 0.8rem;
         color: #444;
+      }
+
+      .piece-label {
+        font-size: 0.85rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+
+      .piece {
+        width: calc(var(--square-size) * 0.78);
+        height: calc(var(--square-size) * 0.78);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        color: #4a2f1a;
+        background: linear-gradient(180deg, #f5e1b5, #ddb77d 60%, #c89b61);
+        clip-path: polygon(50% 2%, 96% 32%, 82% 100%, 18% 100%, 4% 32%);
+        box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(0, 0, 0, 0.25);
+        padding-bottom: 6%;
+        text-align: center;
+        user-select: none;
+      }
+
+      .piece.player-owner {
+        color: #c65c28;
+        background: linear-gradient(180deg, #ffe2c4, #f0b37a 60%, #d08a47);
+      }
+
+      .piece.cpu-owner {
+        color: #4a2f1a;
+        transform: rotate(180deg);
+      }
+
+      .piece.promoted {
+        color: #b71c1c;
+        background: linear-gradient(180deg, #ffd7d1, #f09685 60%, #d0644d);
+      }
+
+      .piece.major {
+        font-size: calc(var(--square-size) * 0.38);
+      }
+
+      .piece:not(.major) {
+        font-size: calc(var(--square-size) * 0.32);
+      }
+
+      .piece.small {
+        width: 54px;
+        height: 54px;
+        font-size: 1.05rem;
+        box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.18);
+      }
+
+      .piece.small.major {
+        font-size: 1.2rem;
       }
 
       #message {
@@ -263,6 +320,8 @@
         R: 1300,
       };
 
+      const MAJOR_PIECES = new Set(["B", "R", "K"]);
+
       const state = {
         board: [],
         hands: {
@@ -364,6 +423,24 @@
           return PROMOTED_SYMBOLS[piece.piece] || PIECE_SYMBOLS[piece.piece] || "";
         }
         return PIECE_SYMBOLS[piece.piece] || "";
+      }
+
+      function createPieceElement(pieceData, { size = "board" } = {}) {
+        const owner = pieceData.owner || PLAYERS.PLAYER;
+        const element = document.createElement("div");
+        element.classList.add("piece");
+        if (size === "hand") {
+          element.classList.add("small");
+        }
+        if (pieceData.promoted) {
+          element.classList.add("promoted");
+        }
+        if (MAJOR_PIECES.has(pieceData.piece)) {
+          element.classList.add("major");
+        }
+        element.classList.add(owner === PLAYERS.PLAYER ? "player-owner" : "cpu-owner");
+        element.textContent = getDisplaySymbol(pieceData);
+        return element;
       }
 
       function forwardDirection(owner) {
@@ -927,11 +1004,8 @@
             square.dataset.col = col;
             const piece = state.board[row][col];
             if (piece) {
-              square.textContent = getDisplaySymbol(piece);
-              square.classList.add(piece.owner === PLAYERS.PLAYER ? "player-piece" : "cpu-piece");
-              if (piece.promoted) {
-                square.classList.add("promoted");
-              }
+              const pieceNode = createPieceElement(piece);
+              square.appendChild(pieceNode);
             }
 
             if (state.selected) {
@@ -963,10 +1037,27 @@
           handEl.innerHTML = "";
           for (const piece of Object.keys(state.hands[owner])) {
             const count = state.hands[owner][piece];
-            if (count <= 0 && isPlayer) continue;
             const button = document.createElement("button");
             button.className = "piece-button";
-            button.innerHTML = `<div>${PIECE_SYMBOLS[piece]}</div><div class="piece-count">× ${count}</div>`;
+            button.type = "button";
+            const pieceNode = createPieceElement(
+              { piece, owner, promoted: false },
+              { size: "hand" }
+            );
+            const label = document.createElement("div");
+            label.className = "piece-label";
+            label.textContent = PIECE_SYMBOLS[piece];
+            const countEl = document.createElement("div");
+            countEl.className = "piece-count";
+            countEl.textContent = `× ${count}`;
+
+            button.appendChild(pieceNode);
+            button.appendChild(label);
+            button.appendChild(countEl);
+
+            if (count <= 0) {
+              button.classList.add("empty");
+            }
             if (isPlayer) {
               button.disabled = count <= 0;
               if (
@@ -977,6 +1068,9 @@
                 button.classList.add("selected");
               }
               button.addEventListener("click", () => onHandPieceClick(piece));
+            } else {
+              button.setAttribute("aria-disabled", "true");
+              button.tabIndex = -1;
             }
             handEl.appendChild(button);
           }
