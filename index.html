@@ -323,6 +323,8 @@
       const CPU_SEARCH_DEPTH = 3;
       const MATE_SCORE = 100000;
       const DRAW_SCORE = 0;
+      const CHECK_BONUS = 70;
+      const MOBILITY_WEIGHT = 4;
 
       const MAJOR_PIECES = new Set(["B", "R", "K"]);
 
@@ -918,7 +920,9 @@
             const piece = stateSnapshot.board[row][col];
             if (!piece) continue;
             const value = getPieceValue(piece.piece, piece.promoted);
-            total += piece.owner === PLAYERS.PLAYER ? value : -value;
+            const advancement =
+              piece.owner === PLAYERS.PLAYER ? (8 - row) * 4 : row * 4;
+            total += piece.owner === PLAYERS.PLAYER ? value + advancement : -(value + advancement);
           }
         }
         const handPieces = Object.keys(stateSnapshot.hands.black);
@@ -926,7 +930,29 @@
           total += stateSnapshot.hands.black[piece] * PIECE_VALUES[piece] * 0.6;
           total -= stateSnapshot.hands.white[piece] * PIECE_VALUES[piece] * 0.6;
         }
+        const blackMoves = generateLegalMoves(stateSnapshot, PLAYERS.PLAYER).length;
+        const whiteMoves = generateLegalMoves(stateSnapshot, PLAYERS.CPU).length;
+        total += (blackMoves - whiteMoves) * MOBILITY_WEIGHT;
+        if (isKingInCheck(stateSnapshot, PLAYERS.PLAYER)) total -= CHECK_BONUS;
+        if (isKingInCheck(stateSnapshot, PLAYERS.CPU)) total += CHECK_BONUS;
         return total;
+      }
+
+      function evaluateMoveHeuristic(stateSnapshot, move) {
+        if (move.drop) {
+          return PIECE_VALUES[move.piece] * 0.2;
+        }
+        let score = 0;
+        const moving = stateSnapshot.board[move.from.row][move.from.col];
+        const target = stateSnapshot.board[move.to.row][move.to.col];
+        if (target) {
+          score += PIECE_VALUES[target.piece] * 8;
+          score -= getPieceValue(moving.piece, moving.promoted);
+        }
+        if (move.promote) {
+          score += getPromotedPieceValue(moving.piece) - PIECE_VALUES[moving.piece] + 120;
+        }
+        return score;
       }
 
       function minimax(stateSnapshot, depth, currentPlayer, alpha, beta) {
@@ -941,6 +967,7 @@
           }
           return DRAW_SCORE;
         }
+        moves.sort((a, b) => evaluateMoveHeuristic(stateSnapshot, b) - evaluateMoveHeuristic(stateSnapshot, a));
 
         if (currentPlayer === PLAYERS.PLAYER) {
           let value = -Infinity;
@@ -968,13 +995,15 @@
       function chooseCpuMove(stateSnapshot) {
         const moves = generateLegalMoves(stateSnapshot, PLAYERS.CPU);
         if (moves.length === 0) return null;
+        moves.sort((a, b) => evaluateMoveHeuristic(stateSnapshot, b) - evaluateMoveHeuristic(stateSnapshot, a));
 
         let bestScore = Infinity;
         let bestMoves = [];
+        const searchDepth = moves.length <= 18 ? CPU_SEARCH_DEPTH + 1 : CPU_SEARCH_DEPTH;
 
         for (const move of moves) {
           const applied = applyMove(stateSnapshot, move);
-          const score = minimax(applied, CPU_SEARCH_DEPTH - 1, PLAYERS.PLAYER, -Infinity, Infinity);
+          const score = minimax(applied, searchDepth - 1, PLAYERS.PLAYER, -Infinity, Infinity);
           if (score < bestScore - 1e-6) {
             bestScore = score;
             bestMoves = [move];
