@@ -121,6 +121,7 @@
         cursor: pointer;
         transition: transform 0.15s ease, border 0.2s ease;
         font-weight: 600;
+        min-height: 98px;
       }
 
       .piece-button:hover {
@@ -206,8 +207,8 @@
       }
 
       .piece.small {
-        width: 54px;
-        height: 54px;
+        width: 44px;
+        height: 44px;
         font-size: 1.05rem;
         box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.18);
       }
@@ -1142,20 +1143,18 @@
             const label = document.createElement("div");
             label.className = "piece-label";
             label.textContent = PIECE_SYMBOLS[piece];
-            if (count <= 0) {
-              continue;
-            }
 
             button.appendChild(pieceNode);
             button.appendChild(label);
-            if (count > 1) {
-              const countEl = document.createElement("div");
-              countEl.className = "piece-count";
-              countEl.textContent = `×${count}`;
-              button.appendChild(countEl);
-            }
+            const countEl = document.createElement("div");
+            countEl.className = "piece-count";
+            countEl.textContent = `×${count}`;
+            button.appendChild(countEl);
             if (isPlayer) {
               button.disabled = count <= 0;
+              if (count <= 0) {
+                button.classList.add("empty");
+              }
               if (
                 state.selected &&
                 state.selected.type === "drop" &&
@@ -1167,6 +1166,9 @@
             } else {
               button.setAttribute("aria-disabled", "true");
               button.tabIndex = -1;
+              if (count <= 0) {
+                button.classList.add("empty");
+              }
             }
             handEl.appendChild(button);
           }
