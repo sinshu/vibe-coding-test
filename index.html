@@ -321,7 +321,7 @@
         R: 1300,
       };
 
-      const CPU_SEARCH_DEPTH = 3;
+      const CPU_SEARCH_DEPTH = 2;
       const MATE_SCORE = 100000;
       const DRAW_SCORE = 0;
       const CHECK_BONUS = 70;
@@ -1000,7 +1000,7 @@
 
         let bestScore = Infinity;
         let bestMoves = [];
-        const searchDepth = moves.length <= 18 ? CPU_SEARCH_DEPTH + 1 : CPU_SEARCH_DEPTH;
+        const searchDepth = CPU_SEARCH_DEPTH;
 
         for (const move of moves) {
           const applied = applyMove(stateSnapshot, move);
