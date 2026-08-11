@@ -321,11 +321,23 @@
         R: 1300,
       };
 
-      const CPU_SEARCH_DEPTH = 2;
       const MATE_SCORE = 100000;
       const DRAW_SCORE = 0;
-      const CHECK_BONUS = 70;
-      const MOBILITY_WEIGHT = 4;
+      const CPU_THINK_TIME_MS = 1800;
+      const CPU_MAX_SEARCH_DEPTH = 7;
+      const QUIESCENCE_DEPTH = 5;
+      const TRANSPOSITION_TABLE_LIMIT = 60000;
+      const CHECK_BONUS = 95;
+      const MOBILITY_WEIGHT = 2;
+
+      // Search data is recreated for every CPU turn. Keeping it outside the
+      // recursive functions avoids allocating a large amount of short-lived data.
+      let searchDeadline = 0;
+      let searchedNodes = 0;
+      let transpositionTable = new Map();
+      let killerMoves = [];
+      let historyScores = new Map();
+      const SEARCH_TIMEOUT = Symbol("search-timeout");
 
       const MAJOR_PIECES = new Set(["B", "R", "K"]);
 
@@ -914,106 +926,477 @@
         return moves;
       }
 
+      function opponentOf(player) {
+        return player === PLAYERS.PLAYER ? PLAYERS.CPU : PLAYERS.PLAYER;
+      }
+
+      function pieceSquareBonus(piece, row, col) {
+        if (piece.piece === "K") return 0;
+        const advancement = piece.owner === PLAYERS.PLAYER ? 8 - row : row;
+        const centrality = 4 - Math.abs(4 - col);
+        let bonus = centrality * (piece.piece === "B" || piece.piece === "R" ? 3 : 2);
+
+        switch (piece.piece) {
+          case "P":
+            bonus += advancement * 6;
+            break;
+          case "L":
+            bonus += advancement * 2;
+            break;
+          case "N":
+            bonus += advancement * 4;
+            break;
+          case "S":
+            bonus += advancement * 5;
+            break;
+          case "G":
+            bonus += advancement * 2;
+            break;
+          default:
+            bonus += advancement;
+        }
+        return bonus;
+      }
+
+      function kingSafety(stateSnapshot, owner, enemyAttacks) {
+        const king = findKing(stateSnapshot.board, owner);
+        if (!king) return -MATE_SCORE;
+        const forward = forwardDirection(owner);
+        let defenderStrength = 0;
+        let shieldPawns = 0;
+        let pressure = enemyAttacks[king.row * SIZE + king.col] * 3;
+
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            const row = king.row + dr;
+            const col = king.col + dc;
+            if (!inBounds(row, col)) continue;
+            const nearby = stateSnapshot.board[row][col];
+            if (nearby && nearby.owner === owner) {
+              if (nearby.piece === "G") defenderStrength += 22;
+              else if (nearby.piece === "S") defenderStrength += 18;
+              else if (nearby.piece === "P") defenderStrength += 8;
+              else defenderStrength += 10;
+            }
+            pressure += enemyAttacks[row * SIZE + col];
+          }
+        }
+
+        const shieldRow = king.row + forward;
+        for (let dc = -1; dc <= 1; dc++) {
+          const col = king.col + dc;
+          if (!inBounds(shieldRow, col)) continue;
+          const shield = stateSnapshot.board[shieldRow][col];
+          if (shield && shield.owner === owner && shield.piece === "P" && !shield.promoted) {
+            shieldPawns++;
+          }
+        }
+
+        const edgeShelter = Math.abs(king.col - 4) * 7;
+        return defenderStrength + shieldPawns * 22 + edgeShelter - pressure * 13;
+      }
+
+      function openingWeight(stateSnapshot) {
+        let piecesOnBoard = 0;
+        for (const row of stateSnapshot.board) {
+          for (const piece of row) {
+            if (piece) piecesOnBoard++;
+          }
+        }
+        return Math.max(0, Math.min(1, (piecesOnBoard - 26) / 14));
+      }
+
+      function openingStructureScore(stateSnapshot, owner, weight = openingWeight(stateSnapshot)) {
+        if (weight <= 0) return 0;
+
+        const board = stateSnapshot.board;
+        const homeRow = owner === PLAYERS.PLAYER ? 8 : 0;
+        const pawnStartRow = owner === PLAYERS.PLAYER ? 6 : 2;
+        const forward = forwardDirection(owner);
+        const king = findKing(board, owner);
+        let score = 0;
+        let rook = null;
+        let bishop = null;
+        const generals = [];
+
+        for (let row = 0; row < SIZE; row++) {
+          for (let col = 0; col < SIZE; col++) {
+            const piece = board[row][col];
+            if (!piece || piece.owner !== owner) continue;
+            if (piece.piece === "R" && !piece.promoted) rook = { row, col };
+            if (piece.piece === "B" && !piece.promoted) bishop = { row, col };
+            if (piece.piece === "G" || piece.piece === "S") generals.push({ row, col });
+          }
+        }
+
+        // Reward pushing the pawn on the rook's file. One or two squares is
+        // useful development; overextended pawns receive no extra opening bonus.
+        if (rook) {
+          for (let row = 0; row < SIZE; row++) {
+            const pawn = board[row][rook.col];
+            if (!pawn || pawn.owner !== owner || pawn.piece !== "P" || pawn.promoted) continue;
+            const advance = (row - pawnStartRow) * forward;
+            if (advance > 0) score += Math.min(advance, 2) * 42;
+            break;
+          }
+        }
+
+        // An opened bishop diagonal is the other sound universal opening plan.
+        // Mobility is capped so this remains an opening preference, not material.
+        if (bishop) {
+          const bishopMobility = getAttackTargets(board, bishop.row, bishop.col, owner).length;
+          score += Math.min(bishopMobility, 7) * 8;
+        }
+
+        if (king) {
+          const homeDepth = (king.row - homeRow) * forward;
+          const lateral = Math.abs(king.col - 4);
+          const nearbyGenerals = generals.filter(
+            (piece) => Math.max(Math.abs(piece.row - king.row), Math.abs(piece.col - king.col)) <= 2
+          ).length;
+          let pawnWall = 0;
+          for (let distance = 1; distance <= 3; distance++) {
+            const row = king.row + forward * distance;
+            if (!inBounds(row, king.col)) continue;
+            for (let dc = -1; dc <= 1; dc++) {
+              const col = king.col + dc;
+              if (!inBounds(row, col)) continue;
+              const pawn = board[row][col];
+              if (pawn && pawn.owner === owner && pawn.piece === "P" && !pawn.promoted) pawnWall++;
+            }
+          }
+
+          // In the opening the king should travel sideways along the back ranks,
+          // not walk toward the centre of the board before its escorts are ready.
+          score -= Math.max(0, homeDepth) * 92;
+          if (homeDepth <= 1) score += lateral * 10;
+
+          // A castle is recognised by three ingredients rather than one fixed
+          // pattern: an off-centre king, nearby gold/silver, and a pawn wall.
+          const castleProgress = Math.max(0, lateral - 1);
+          score += castleProgress * (nearbyGenerals * 18 + Math.min(pawnWall, 5) * 7);
+          if (lateral >= 2 && nearbyGenerals < 2) score -= 32;
+        }
+
+        return score * weight;
+      }
+
+      // Positive scores favour the human (black); negative scores favour the CPU.
       function evaluate(stateSnapshot) {
         let total = 0;
+        const attacks = {
+          black: Array(SIZE * SIZE).fill(0),
+          white: Array(SIZE * SIZE).fill(0),
+        };
+
         for (let row = 0; row < SIZE; row++) {
           for (let col = 0; col < SIZE; col++) {
             const piece = stateSnapshot.board[row][col];
             if (!piece) continue;
+            const sign = piece.owner === PLAYERS.PLAYER ? 1 : -1;
+            const targets = getAttackTargets(stateSnapshot.board, row, col, piece.owner);
             const value = getPieceValue(piece.piece, piece.promoted);
-            const advancement =
-              piece.owner === PLAYERS.PLAYER ? (8 - row) * 4 : row * 4;
-            total += piece.owner === PLAYERS.PLAYER ? value + advancement : -(value + advancement);
+            for (const target of targets) {
+              attacks[piece.owner][target.row * SIZE + target.col]++;
+            }
+            total += sign * (value + pieceSquareBonus(piece, row, col));
+            total += sign * targets.length * MOBILITY_WEIGHT;
           }
         }
-        const handPieces = Object.keys(stateSnapshot.hands.black);
-        for (const piece of handPieces) {
-          total += stateSnapshot.hands.black[piece] * PIECE_VALUES[piece] * 0.6;
-          total -= stateSnapshot.hands.white[piece] * PIECE_VALUES[piece] * 0.6;
+
+        for (const piece of Object.keys(stateSnapshot.hands.black)) {
+          const handFactor = piece === "B" || piece === "R" ? 1.05 : 0.92;
+          total += stateSnapshot.hands.black[piece] * PIECE_VALUES[piece] * handFactor;
+          total -= stateSnapshot.hands.white[piece] * PIECE_VALUES[piece] * handFactor;
         }
-        const blackMoves = generateLegalMoves(stateSnapshot, PLAYERS.PLAYER).length;
-        const whiteMoves = generateLegalMoves(stateSnapshot, PLAYERS.CPU).length;
-        total += (blackMoves - whiteMoves) * MOBILITY_WEIGHT;
+
+        total += kingSafety(stateSnapshot, PLAYERS.PLAYER, attacks.white);
+        total -= kingSafety(stateSnapshot, PLAYERS.CPU, attacks.black);
+        const opening = openingWeight(stateSnapshot);
+        total += openingStructureScore(stateSnapshot, PLAYERS.PLAYER, opening);
+        total -= openingStructureScore(stateSnapshot, PLAYERS.CPU, opening);
         if (isKingInCheck(stateSnapshot, PLAYERS.PLAYER)) total -= CHECK_BONUS;
         if (isKingInCheck(stateSnapshot, PLAYERS.CPU)) total += CHECK_BONUS;
         return total;
       }
 
-      function evaluateMoveHeuristic(stateSnapshot, move) {
-        if (move.drop) {
-          return PIECE_VALUES[move.piece] * 0.2;
+      function moveKey(move) {
+        if (move.drop) return `D${move.piece}${move.to.row}${move.to.col}`;
+        return `${move.from.row}${move.from.col}${move.to.row}${move.to.col}${move.promote ? "+" : "-"}`;
+      }
+
+      function positionKey(stateSnapshot, currentPlayer) {
+        let key = currentPlayer === PLAYERS.PLAYER ? "b|" : "w|";
+        for (let row = 0; row < SIZE; row++) {
+          for (let col = 0; col < SIZE; col++) {
+            const piece = stateSnapshot.board[row][col];
+            key += piece
+              ? `${piece.owner === PLAYERS.PLAYER ? "b" : "w"}${piece.piece}${piece.promoted ? "+" : "-"}`
+              : ".";
+          }
         }
-        let score = 0;
+        key += "|";
+        for (const owner of [PLAYERS.PLAYER, PLAYERS.CPU]) {
+          for (const piece of Object.keys(stateSnapshot.hands[owner])) {
+            key += stateSnapshot.hands[owner][piece].toString(36);
+          }
+          key += "|";
+        }
+        return key;
+      }
+
+      function evaluateMoveHeuristic(stateSnapshot, move, player, ply, ttMoveKey = null) {
+        const key = moveKey(move);
+        if (key === ttMoveKey) return 1000000000;
+
+        let score = historyScores.get(`${player}:${key}`) || 0;
+        if (killerMoves[ply]?.includes(key)) score += 90000;
+
+        if (move.drop) {
+          const enemyKing = findKing(stateSnapshot.board, opponentOf(player));
+          if (enemyKing) {
+            const distance = Math.max(
+              Math.abs(enemyKing.row - move.to.row),
+              Math.abs(enemyKing.col - move.to.col)
+            );
+            score += Math.max(0, 5 - distance) * 20;
+          }
+          return score + PIECE_VALUES[move.piece] * 0.05;
+        }
+
         const moving = stateSnapshot.board[move.from.row][move.from.col];
         const target = stateSnapshot.board[move.to.row][move.to.col];
         if (target) {
-          score += PIECE_VALUES[target.piece] * 8;
+          score += getPieceValue(target.piece, target.promoted) * 16;
           score -= getPieceValue(moving.piece, moving.promoted);
         }
         if (move.promote) {
-          score += getPromotedPieceValue(moving.piece) - PIECE_VALUES[moving.piece] + 120;
+          score += (getPromotedPieceValue(moving.piece) - PIECE_VALUES[moving.piece]) * 6 + 500;
         }
         return score;
       }
 
-      function minimax(stateSnapshot, depth, currentPlayer, alpha, beta) {
-        if (depth === 0) {
-          return evaluate(stateSnapshot);
-        }
+      function orderMoves(stateSnapshot, moves, player, ply, ttMoveKey = null) {
+        return moves
+          .map((move) => ({
+            move,
+            score: evaluateMoveHeuristic(stateSnapshot, move, player, ply, ttMoveKey),
+          }))
+          .sort((a, b) => b.score - a.score)
+          .map((entry) => entry.move);
+      }
 
-        const moves = generateLegalMoves(stateSnapshot, currentPlayer);
-        if (moves.length === 0) {
-          if (isKingInCheck(stateSnapshot, currentPlayer)) {
-            return currentPlayer === PLAYERS.PLAYER ? -MATE_SCORE : MATE_SCORE;
-          }
-          return DRAW_SCORE;
-        }
-        moves.sort((a, b) => evaluateMoveHeuristic(stateSnapshot, b) - evaluateMoveHeuristic(stateSnapshot, a));
-
-        if (currentPlayer === PLAYERS.PLAYER) {
-          let value = -Infinity;
-          for (const move of moves) {
-            const applied = applyMove(stateSnapshot, move);
-            const score = minimax(applied, depth - 1, PLAYERS.CPU, alpha, beta);
-            value = Math.max(value, score);
-            alpha = Math.max(alpha, value);
-            if (beta <= alpha) break;
-          }
-          return value;
-        } else {
-          let value = Infinity;
-          for (const move of moves) {
-            const applied = applyMove(stateSnapshot, move);
-            const score = minimax(applied, depth - 1, PLAYERS.PLAYER, alpha, beta);
-            value = Math.min(value, score);
-            beta = Math.min(beta, value);
-            if (beta <= alpha) break;
-          }
-          return value;
+      function checkSearchTime() {
+        searchedNodes++;
+        if ((searchedNodes & 127) === 0 && performance.now() >= searchDeadline) {
+          throw SEARCH_TIMEOUT;
         }
       }
 
-      function chooseCpuMove(stateSnapshot) {
-        const moves = generateLegalMoves(stateSnapshot, PLAYERS.CPU);
-        if (moves.length === 0) return null;
-        moves.sort((a, b) => evaluateMoveHeuristic(stateSnapshot, b) - evaluateMoveHeuristic(stateSnapshot, a));
+      function terminalScore(stateSnapshot, currentPlayer, ply, moves) {
+        if (moves.length > 0) return null;
+        if (!isKingInCheck(stateSnapshot, currentPlayer)) return DRAW_SCORE;
+        return currentPlayer === PLAYERS.PLAYER ? -MATE_SCORE + ply : MATE_SCORE - ply;
+      }
 
-        let bestScore = Infinity;
-        let bestMoves = [];
-        const searchDepth = CPU_SEARCH_DEPTH;
+      function quiescence(stateSnapshot, currentPlayer, alpha, beta, ply, depthLeft) {
+        checkSearchTime();
+        const inCheck = isKingInCheck(stateSnapshot, currentPlayer);
+        const standPat = evaluate(stateSnapshot);
 
+        if (!inCheck) {
+          if (currentPlayer === PLAYERS.PLAYER) {
+            if (standPat >= beta) return standPat;
+            alpha = Math.max(alpha, standPat);
+          } else {
+            if (standPat <= alpha) return standPat;
+            beta = Math.min(beta, standPat);
+          }
+          if (depthLeft <= 0) return standPat;
+        } else if (depthLeft <= -2) {
+          return standPat;
+        }
+
+        let moves = generateLegalMoves(stateSnapshot, currentPlayer);
+        const terminal = terminalScore(stateSnapshot, currentPlayer, ply, moves);
+        if (terminal !== null) return terminal;
+
+        if (!inCheck) {
+          moves = moves.filter((move) => {
+            if (move.promote) return true;
+            return !move.drop && !!stateSnapshot.board[move.to.row][move.to.col];
+          });
+          if (moves.length === 0) return standPat;
+        }
+        moves = orderMoves(stateSnapshot, moves, currentPlayer, ply);
+
+        if (currentPlayer === PLAYERS.PLAYER) {
+          let value = inCheck ? -Infinity : standPat;
+          for (const move of moves) {
+            value = Math.max(
+              value,
+              quiescence(applyMove(stateSnapshot, move), PLAYERS.CPU, alpha, beta, ply + 1, depthLeft - 1)
+            );
+            alpha = Math.max(alpha, value);
+            if (alpha >= beta) break;
+          }
+          return value;
+        }
+
+        let value = inCheck ? Infinity : standPat;
         for (const move of moves) {
-          const applied = applyMove(stateSnapshot, move);
-          const score = minimax(applied, searchDepth - 1, PLAYERS.PLAYER, -Infinity, Infinity);
-          if (score < bestScore - 1e-6) {
-            bestScore = score;
-            bestMoves = [move];
-          } else if (Math.abs(score - bestScore) < 1e-6) {
-            bestMoves.push(move);
+          value = Math.min(
+            value,
+            quiescence(applyMove(stateSnapshot, move), PLAYERS.PLAYER, alpha, beta, ply + 1, depthLeft - 1)
+          );
+          beta = Math.min(beta, value);
+          if (alpha >= beta) break;
+        }
+        return value;
+      }
+
+      function alphaBeta(stateSnapshot, depth, currentPlayer, alpha, beta, ply) {
+        checkSearchTime();
+        if (depth <= 0) {
+          return quiescence(stateSnapshot, currentPlayer, alpha, beta, ply, QUIESCENCE_DEPTH);
+        }
+
+        const alphaStart = alpha;
+        const betaStart = beta;
+        const key = positionKey(stateSnapshot, currentPlayer);
+        const cached = transpositionTable.get(key);
+        if (cached && cached.depth >= depth) {
+          if (cached.flag === "exact") return cached.score;
+          if (cached.flag === "lower") alpha = Math.max(alpha, cached.score);
+          if (cached.flag === "upper") beta = Math.min(beta, cached.score);
+          if (alpha >= beta) return cached.score;
+        }
+
+        let moves = generateLegalMoves(stateSnapshot, currentPlayer);
+        const terminal = terminalScore(stateSnapshot, currentPlayer, ply, moves);
+        if (terminal !== null) return terminal;
+        moves = orderMoves(stateSnapshot, moves, currentPlayer, ply, cached?.bestMoveKey);
+
+        let bestMoveKey = null;
+        let value = currentPlayer === PLAYERS.PLAYER ? -Infinity : Infinity;
+        for (const move of moves) {
+          const score = alphaBeta(
+            applyMove(stateSnapshot, move),
+            depth - 1,
+            opponentOf(currentPlayer),
+            alpha,
+            beta,
+            ply + 1
+          );
+
+          if (currentPlayer === PLAYERS.PLAYER) {
+            if (score > value) {
+              value = score;
+              bestMoveKey = moveKey(move);
+            }
+            alpha = Math.max(alpha, value);
+          } else {
+            if (score < value) {
+              value = score;
+              bestMoveKey = moveKey(move);
+            }
+            beta = Math.min(beta, value);
+          }
+
+          if (alpha >= beta) {
+            const isCapture = !move.drop && !!stateSnapshot.board[move.to.row][move.to.col];
+            if (!isCapture && !move.promote) {
+              const cutoffKey = moveKey(move);
+              killerMoves[ply] = [
+                cutoffKey,
+                ...(killerMoves[ply] || []).filter((item) => item !== cutoffKey),
+              ].slice(0, 2);
+              const historyKey = `${currentPlayer}:${cutoffKey}`;
+              historyScores.set(historyKey, (historyScores.get(historyKey) || 0) + depth * depth * 20);
+            }
+            break;
           }
         }
 
-        return bestMoves[Math.floor(Math.random() * bestMoves.length)];
+        const flag = value <= alphaStart ? "upper" : value >= betaStart ? "lower" : "exact";
+        if (transpositionTable.size >= TRANSPOSITION_TABLE_LIMIT) transpositionTable.clear();
+        transpositionTable.set(key, { depth, score: value, flag, bestMoveKey });
+        return value;
+      }
+
+      function chooseCpuMove(stateSnapshot) {
+        let rootMoves = generateLegalMoves(stateSnapshot, PLAYERS.CPU);
+        if (rootMoves.length === 0) return null;
+
+        searchDeadline = performance.now() + CPU_THINK_TIME_MS;
+        searchedNodes = 0;
+        transpositionTable = new Map();
+        killerMoves = [];
+        historyScores = new Map();
+        rootMoves = orderMoves(stateSnapshot, rootMoves, PLAYERS.CPU, 0);
+
+        // Complete a cheap one-position scan first, so even a very slow device
+        // gets a positionally sensible fallback before deeper search starts.
+        let completedBestMove = rootMoves[0];
+        let completedBestScore = Infinity;
+        let previousScores = new Map();
+        for (const move of rootMoves) {
+          const score = evaluate(applyMove(stateSnapshot, move));
+          previousScores.set(moveKey(move), score);
+          if (score < completedBestScore) {
+            completedBestScore = score;
+            completedBestMove = move;
+          }
+        }
+
+        for (let depth = 1; depth <= CPU_MAX_SEARCH_DEPTH; depth++) {
+          let iterationBestMove = null;
+          let iterationBestScore = Infinity;
+          const iterationScores = new Map();
+          rootMoves.sort((a, b) => {
+            const scoreA = previousScores.get(moveKey(a));
+            const scoreB = previousScores.get(moveKey(b));
+            if (scoreA !== undefined || scoreB !== undefined) {
+              return (scoreA ?? Infinity) - (scoreB ?? Infinity);
+            }
+            return evaluateMoveHeuristic(stateSnapshot, b, PLAYERS.CPU, 0) -
+              evaluateMoveHeuristic(stateSnapshot, a, PLAYERS.CPU, 0);
+          });
+
+          try {
+            let beta = Infinity;
+            for (const move of rootMoves) {
+              const score = alphaBeta(
+                applyMove(stateSnapshot, move),
+                depth - 1,
+                PLAYERS.PLAYER,
+                -Infinity,
+                beta,
+                1
+              );
+              iterationScores.set(moveKey(move), score);
+              if (score < iterationBestScore) {
+                iterationBestScore = score;
+                iterationBestMove = move;
+              }
+              beta = Math.min(beta, iterationBestScore);
+            }
+          } catch (error) {
+            if (error !== SEARCH_TIMEOUT) throw error;
+            break;
+          }
+
+          if (iterationBestMove) {
+            completedBestMove = iterationBestMove;
+            completedBestScore = iterationBestScore;
+            previousScores = iterationScores;
+          }
+          if (Math.abs(completedBestScore) >= MATE_SCORE - 100) break;
+          if (performance.now() >= searchDeadline) break;
+        }
+
+        return completedBestMove;
       }
 
       function makeMove(move) {
