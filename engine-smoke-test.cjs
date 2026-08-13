@@ -31,15 +31,20 @@ const expose = `
   globalThis.engine = {
     PLAYERS, state, createInitialBoard, generateLegalMoves, applyMove,
     isKingInCheck, chooseCpuMove, moveKey, evaluate, openingStructureScore,
+    onSquareClick, onHandPieceClick, resetGame, getDisplaySymbol, cpuJudgmentForScore,
     searchStats: () => ({
       searchedNodes,
       deepestTableEntry: Math.max(0, ...Array.from(transpositionTable.values(), (entry) => entry.depth)),
     })
   };
 `;
+const testMath = Object.create(Math);
+testMath.random = () => 0.25;
+
 const context = {
   document,
   window: { confirm: () => true },
+  Math: testMath,
   performance,
   setTimeout,
   console,
@@ -50,6 +55,30 @@ const engine = context.engine;
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+engine.onSquareClick(6, 4);
+assert(engine.state.selected?.type === "board", "Clicking a player piece should select it");
+engine.onSquareClick(6, 4);
+assert(engine.state.selected === null, "Clicking the selected board piece should cancel selection");
+
+engine.state.hands.black.P = 1;
+engine.onHandPieceClick("P");
+assert(engine.state.selected?.type === "drop", "Clicking a held piece should select it");
+engine.onHandPieceClick("P");
+assert(engine.state.selected === null, "Clicking the selected held piece should cancel selection");
+engine.resetGame(false);
+assert(engine.state.currentPlayer === engine.PLAYERS.CPU, "CPU should move first when assigned sente");
+assert(engine.state.cpuThinking, "CPU should enter thinking state when moving first");
+engine.resetGame(true);
+assert(engine.state.currentPlayer === engine.PLAYERS.PLAYER, "Player should move first when assigned sente");
+assert(!engine.state.cpuThinking, "CPU should not think during the player's opening turn");
+
+assert(engine.getDisplaySymbol({ piece: "S", promoted: true }) === "全", "Promoted silver should use 全");
+assert(engine.getDisplaySymbol({ piece: "N", promoted: true }) === "圭", "Promoted knight should use 圭");
+assert(engine.getDisplaySymbol({ piece: "L", promoted: true }) === "杏", "Promoted lance should use 杏");
+assert(engine.cpuJudgmentForScore(0).emoji === "😐", "An even position should show the neutral emoji");
+assert(engine.cpuJudgmentForScore(700).emoji === "🙂", "A CPU edge should show a positive emoji");
+assert(engine.cpuJudgmentForScore(-700).emoji === "😟", "A CPU deficit should show a worried emoji");
 
 const initial = {
   board: engine.createInitialBoard(),

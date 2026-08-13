@@ -2,278 +2,570 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#2b251f" />
     <title>ブラウザで遊べる将棋（対CPU）</title>
     <style>
       :root {
-        color-scheme: light dark;
-        font-family: "Noto Sans JP", system-ui, -apple-system, BlinkMacSystemFont,
-          "Segoe UI", sans-serif;
-        --board-size: min(80vw, 560px);
+        color-scheme: light;
+        font-family: "Noto Sans JP", "Yu Gothic", "Hiragino Kaku Gothic ProN",
+          system-ui, sans-serif;
+        --ink: #251f1a;
+        --muted: #746a5f;
+        --paper: #f5f0e6;
+        --panel: rgba(255, 252, 245, 0.88);
+        --line: rgba(57, 43, 31, 0.16);
+        --accent: #bd4e2c;
+        --accent-soft: #f4c8a9;
+        --piece-ratio: 22 / 25;
+        --piece-fill: #efd39d;
+        --piece-outline: #75502d;
+        --piece-border-width: clamp(1px, 0.18vmin, 1.5px);
+        --piece-shape: polygon(
+          50% 1%,
+          88% 19%,
+          96% 98%,
+          4% 98%,
+          12% 19%
+        );
+        --page-padding: clamp(6px, 1.2vmin, 16px);
+        --layout-gap: clamp(6px, 1.2vmin, 14px);
+        --header-height: clamp(54px, 9vmin, 76px);
+        --hand-width: clamp(84px, 12vw, 152px);
+        --board-size: min(
+          calc(100dvh - var(--page-padding) - var(--page-padding) - var(--header-height) - var(--layout-gap)),
+          calc(100dvw - var(--page-padding) - var(--page-padding) - var(--hand-width) - var(--hand-width) - var(--layout-gap) - var(--layout-gap))
+        );
         --square-size: calc(var(--board-size) / 9);
-        background-color: #f9f7f1;
-        color: #222;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
       }
 
       body {
         margin: 0;
-        padding: 2rem;
-        display: flex;
-        flex-direction: column;
+        height: 100dvh;
+        padding: max(var(--page-padding), env(safe-area-inset-top))
+          max(var(--page-padding), env(safe-area-inset-right))
+          max(var(--page-padding), env(safe-area-inset-bottom))
+          max(var(--page-padding), env(safe-area-inset-left));
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 12% 8%, rgba(255, 255, 255, 0.92), transparent 28%),
+          linear-gradient(145deg, #f7f2e8 0%, #e6ddce 100%);
+      }
+
+      button {
+        font: inherit;
+      }
+
+      button:focus-visible {
+        outline: 3px solid #266e73;
+        outline-offset: 2px;
+      }
+
+      #game-container {
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: var(--header-height) minmax(0, 1fr);
+        gap: var(--layout-gap);
+      }
+
+      .game-header {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto auto;
         align-items: center;
-        gap: 1.5rem;
-        background: radial-gradient(circle at top, #faf8f3, #ede8db);
-        min-height: 100vh;
+        gap: clamp(8px, 2vw, 24px);
+        padding: 0 clamp(8px, 1.6vw, 20px);
+        background: rgba(43, 37, 31, 0.94);
+        color: #fffaf0;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 8px 28px rgba(46, 35, 25, 0.16);
+      }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 0.6rem;
+        white-space: nowrap;
+      }
+
+      .brand-mark {
+        color: #e89a6a;
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 0.16em;
       }
 
       h1 {
         margin: 0;
-        font-size: clamp(1.8rem, 2.5vw + 1rem, 2.8rem);
-        letter-spacing: 0.08em;
-        text-align: center;
-      }
-
-      #game-container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 1rem;
-        width: min(95vw, 960px);
-      }
-
-      #board {
-        display: grid;
-        grid-template-columns: repeat(9, var(--square-size));
-        grid-template-rows: repeat(9, var(--square-size));
-        gap: 0;
-        border: 6px solid #b28b55;
-        border-radius: 12px;
-        background: linear-gradient(135deg, #d8b279, #e9c99c);
-        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
-      }
-
-      .square {
-        position: relative;
-        width: var(--square-size);
-        height: var(--square-size);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background 0.2s ease, transform 0.1s ease;
-        cursor: pointer;
-        user-select: none;
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        background: rgba(255, 255, 255, 0.35);
-      }
-
-      .square:nth-child(odd) {
-        background: rgba(255, 255, 255, 0.45);
-      }
-
-      .square.highlight {
-        background: rgba(255, 230, 125, 0.85) !important;
-        transform: scale(1.02);
-      }
-
-      .square.last-move-from {
-        background: rgba(128, 196, 255, 0.75);
-      }
-
-      .square.last-move-to {
-        background: rgba(255, 214, 140, 0.85);
-      }
-
-      .square.capture-target {
-        box-shadow: inset 0 0 0 3px rgba(194, 21, 0, 0.7);
-      }
-
-      .hand {
-        width: min(95vw, 960px);
-        background: rgba(255, 255, 255, 0.6);
-        border-radius: 16px;
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
-        padding: 1rem 1.2rem;
-      }
-
-      .hand h2 {
-        margin: 0 0 0.8rem;
-        font-size: 1.1rem;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }
-
-      .pieces {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
-        gap: 0.6rem;
-      }
-
-      .piece-button {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 0.25rem;
-        padding: 0.5rem;
-        border-radius: 12px;
-        border: 2px solid transparent;
-        background: rgba(255, 255, 255, 0.9);
-        cursor: pointer;
-        transition: transform 0.15s ease, border 0.2s ease;
-        font-weight: 600;
-        min-height: 98px;
-      }
-
-      .piece-button:hover {
-        transform: translateY(-2px);
-        border-color: rgba(198, 92, 40, 0.7);
-      }
-
-      .piece-button.selected {
-        border-color: #d35400;
-        background: rgba(255, 230, 150, 0.8);
-      }
-
-      .piece-button:disabled {
-        opacity: 0.65;
-        cursor: not-allowed;
-      }
-
-      .piece-button[aria-disabled="true"] {
-        cursor: default;
-        pointer-events: none;
-      }
-
-      .piece-button.empty .piece {
-        filter: grayscale(0.35);
-        opacity: 0.7;
-      }
-
-      .piece-count {
-        font-size: 0.8rem;
-        color: #444;
-      }
-
-      .piece-label {
-        font-size: 0.85rem;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-      }
-
-      .piece {
-        width: calc(var(--square-size) * 0.78);
-        height: calc(var(--square-size) * 0.78);
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+        font-size: clamp(1.15rem, 2.8vmin, 1.8rem);
         font-weight: 700;
-        letter-spacing: 0.16em;
-        color: #4a2f1a;
-        background: linear-gradient(180deg, #f5e1b5, #ddb77d 60%, #c89b61);
-        clip-path: polygon(50% 2%, 96% 32%, 82% 100%, 18% 100%, 4% 32%);
-        box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(0, 0, 0, 0.25);
-        padding-bottom: 6%;
-        text-align: center;
-        user-select: none;
-      }
-
-      .piece-p {
-        font-weight: 500;
         letter-spacing: 0.12em;
-        font-family: "Noto Sans JP", "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
-      }
-
-      .piece.player-owner {
-        color: #c65c28;
-        background: linear-gradient(180deg, #ffe2c4, #f0b37a 60%, #d08a47);
-      }
-
-      .piece.cpu-owner {
-        color: #4a2f1a;
-        transform: rotate(180deg);
-      }
-
-      .piece.promoted {
-        color: #b71c1c;
-        background: linear-gradient(180deg, #ffd7d1, #f09685 60%, #d0644d);
-      }
-
-      .piece.major {
-        font-size: calc(var(--square-size) * 0.38);
-      }
-
-      .piece:not(.major) {
-        font-size: calc(var(--square-size) * 0.32);
-      }
-
-      .piece.small {
-        width: 44px;
-        height: 44px;
-        font-size: 1.05rem;
-        box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.18);
-      }
-
-      .piece.small.major {
-        font-size: 1.2rem;
       }
 
       #message {
-        font-size: 1.1rem;
-        padding: 0.8rem 1.2rem;
-        background: rgba(255, 255, 255, 0.8);
-        border-radius: 12px;
-        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
+        min-width: 0;
+        overflow: hidden;
+        color: #f4e9da;
+        font-size: clamp(0.78rem, 1.8vmin, 1rem);
+        font-weight: 650;
+        letter-spacing: 0.04em;
         text-align: center;
-        min-height: 2.8rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       #controls {
         display: flex;
-        gap: 0.8rem;
       }
 
-      button.control {
-        border: none;
-        padding: 0.7rem 1.2rem;
-        border-radius: 999px;
-        background: linear-gradient(135deg, #f19066, #f5cd79);
+      .cpu-evaluation {
+        height: calc(100% - 10px);
+        max-height: 64px;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0 0.55rem;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.07);
+        white-space: nowrap;
+      }
+
+      .cpu-evaluation-label {
+        color: rgba(255, 250, 240, 0.7);
+        font-size: 0.68rem;
+        font-weight: 750;
+        letter-spacing: 0.08em;
+      }
+
+      #cpu-evaluation-emoji {
+        font-size: clamp(2rem, 5.2vmin, 3rem);
+        line-height: 1;
+      }
+
+      .control {
+        min-height: 34px;
+        padding: 0.4rem clamp(0.65rem, 1.6vw, 1rem);
+        border: 1px solid rgba(255, 255, 255, 0.26);
+        border-radius: 8px;
+        color: #fffaf0;
+        background: transparent;
+        font-size: clamp(0.72rem, 1.7vmin, 0.88rem);
         font-weight: 700;
+        letter-spacing: 0.05em;
         cursor: pointer;
-        transition: transform 0.15s ease;
+        transition: background 150ms ease, border-color 150ms ease;
       }
 
-      button.control:hover {
-        transform: translateY(-1px);
+      .control:hover {
+        border-color: #e89a6a;
+        background: rgba(232, 154, 106, 0.14);
       }
 
-      @media (max-width: 600px) {
-        body {
-          padding: 1.4rem 0.6rem 2rem;
-        }
+      #play-area {
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: var(--hand-width) var(--board-size) var(--hand-width);
+        grid-template-areas: "cpu board player";
+        justify-content: center;
+        align-content: center;
+        gap: var(--layout-gap);
+      }
 
+      #cpu-hand {
+        grid-area: cpu;
+      }
+
+      #board {
+        grid-area: board;
+        width: var(--board-size);
+        height: var(--board-size);
+        display: grid;
+        grid-template-columns: repeat(9, 1fr);
+        grid-template-rows: repeat(9, 1fr);
+        overflow: hidden;
+        border: clamp(3px, 0.7vmin, 6px) solid #8b633a;
+        border-radius: clamp(4px, 0.8vmin, 9px);
+        background: #ddb77e;
+        box-shadow: 0 16px 38px rgba(49, 34, 21, 0.24);
+      }
+
+      #player-hand {
+        grid-area: player;
+      }
+
+      .square {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        appearance: none;
+        padding: 0;
+        border: 0;
+        border-right: 1px solid rgba(66, 43, 22, 0.36);
+        border-bottom: 1px solid rgba(66, 43, 22, 0.36);
+        background: rgba(255, 240, 201, 0.24);
+        cursor: pointer;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        transition: background 120ms ease, box-shadow 120ms ease;
+      }
+
+      .square:nth-child(9n) {
+        border-right: 0;
+      }
+
+      .square:nth-last-child(-n + 9) {
+        border-bottom: 0;
+      }
+
+      .square:hover {
+        background: rgba(255, 247, 220, 0.52);
+      }
+
+      .square.highlight {
+        background: rgba(243, 198, 88, 0.82);
+        box-shadow: inset 0 0 0 2px rgba(131, 82, 20, 0.3);
+      }
+
+      .square.last-move-from {
+        background: rgba(126, 179, 180, 0.52);
+      }
+
+      .square.last-move-to {
+        background: rgba(236, 164, 96, 0.62);
+      }
+
+      .square.capture-target {
+        box-shadow: inset 0 0 0 3px rgba(161, 47, 28, 0.68);
+      }
+
+      .hand {
+        width: 100%;
+        height: var(--board-size);
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: clamp(3px, 0.7vmin, 7px);
+        padding: clamp(6px, 1.1vmin, 12px);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-top: 3px solid #a87645;
+        background: var(--panel);
+        box-shadow: 0 10px 26px rgba(57, 43, 31, 0.11);
+      }
+
+      .hand h2 {
+        margin: 0;
+        color: var(--muted);
+        font-size: clamp(0.65rem, 1.6vmin, 0.82rem);
+        font-weight: 750;
+        letter-spacing: 0.08em;
+        text-align: center;
+        white-space: nowrap;
+      }
+
+      .pieces {
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: repeat(7, minmax(0, 1fr));
+        gap: clamp(2px, 0.5vmin, 5px);
+      }
+
+      .piece-button {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-rows: 1fr;
+        place-items: center;
+        gap: 2px;
+        padding: 2px clamp(2px, 0.5vmin, 6px);
+        overflow: hidden;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.56);
+        cursor: pointer;
+        transition: background 120ms ease, border-color 120ms ease;
+      }
+
+      .piece-button:hover:not(:disabled) {
+        border-color: rgba(189, 78, 44, 0.42);
+        background: #fffaf1;
+      }
+
+      .piece-button.selected {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        box-shadow: inset 0 0 0 1px var(--accent);
+      }
+
+      .piece-button:disabled,
+      .piece-button[aria-disabled="true"] {
+        cursor: default;
+      }
+
+      .piece-button:disabled {
+        opacity: 0.42;
+      }
+
+      .piece-button[aria-disabled="true"] {
+        pointer-events: none;
+      }
+
+      .piece-label {
+        display: none;
+      }
+
+      .piece-count {
+        color: var(--muted);
+        font-size: clamp(0.58rem, 1.5vmin, 0.78rem);
+        font-weight: 750;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .piece {
+        --piece-scale: 1;
+        position: relative;
+        isolation: isolate;
+        width: calc(var(--square-size) * 0.72);
+        height: auto;
+        aspect-ratio: var(--piece-ratio);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        color: #3f2b19;
+        background: var(--piece-outline);
+        clip-path: var(--piece-shape);
+        filter: drop-shadow(0 2px 1px rgba(45, 29, 16, 0.28));
+        font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-align: center;
+        user-select: none;
+        pointer-events: none;
+      }
+
+      .piece::before {
+        position: absolute;
+        z-index: 0;
+        inset: var(--piece-border-width);
+        content: "";
+        background: var(--piece-fill);
+        clip-path: var(--piece-shape);
+      }
+
+      .piece-symbol {
+        position: relative;
+        z-index: 1;
+        line-height: 1;
+        transform: translateY(15%);
+      }
+
+      .piece-p {
+        font-weight: 650;
+      }
+
+      .piece.player-owner {
+        transform: scale(var(--piece-scale));
+      }
+
+      .piece.cpu-owner {
+        transform: rotate(180deg) scale(var(--piece-scale));
+      }
+
+      .piece.promoted {
+        color: #a11f1f;
+      }
+
+      .piece.large {
+        --piece-scale: 1.08;
+        font-size: calc(var(--square-size) * 0.36);
+      }
+
+      .piece:not(.large) {
+        font-size: calc(var(--square-size) * 0.31);
+      }
+
+      .piece.piece-p {
+        --piece-scale: 0.91;
+        font-size: calc(var(--square-size) * 0.3);
+      }
+
+      .piece.small {
+        --piece-border-width: 1px;
+        width: auto;
+        height: min(70%, 4.2vmin);
+        font-size: clamp(0.6rem, 2vmin, 1rem);
+        filter: drop-shadow(0 1px 1px rgba(45, 29, 16, 0.24));
+      }
+
+      .piece.small.large {
+        font-size: clamp(0.64rem, 2.1vmin, 1.06rem);
+      }
+
+      .piece.small.piece-p {
+        font-size: clamp(0.59rem, 1.92vmin, 0.95rem);
+      }
+
+      @media (orientation: portrait) {
         :root {
-          --board-size: min(92vw, 520px);
+          --hand-height: clamp(56px, 9dvh, 80px);
+          --board-size: min(
+            calc(100dvw - var(--page-padding) - var(--page-padding)),
+            calc(100dvh - var(--page-padding) - var(--page-padding) - var(--header-height) - var(--hand-height) - var(--hand-height) - var(--layout-gap) - var(--layout-gap) - var(--layout-gap))
+          );
+          --square-size: calc(var(--board-size) / 9);
         }
 
+        #play-area {
+          grid-template-columns: var(--board-size);
+          grid-template-rows: var(--hand-height) var(--board-size) var(--hand-height);
+          grid-template-areas:
+            "cpu"
+            "board"
+            "player";
+        }
+
+        .hand {
+          width: var(--board-size);
+          height: var(--hand-height);
+          grid-template-columns: clamp(48px, 12vw, 74px) minmax(0, 1fr);
+          grid-template-rows: minmax(0, 1fr);
+          align-items: stretch;
+        }
+
+        .hand h2 {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          white-space: normal;
+          line-height: 1.35;
+        }
+
+        .pieces {
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+          grid-template-rows: minmax(0, 1fr);
+        }
+
+        .piece-button {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: minmax(0, 1fr);
+          padding: 2px;
+        }
+
+        .piece-count {
+          position: absolute;
+          right: 2px;
+          bottom: 1px;
+          z-index: 2;
+          line-height: 1;
+        }
+
+        .piece.small {
+          width: auto;
+          height: min(88%, 7vmin);
+          font-size: clamp(0.64rem, 2.8vmin, 1.12rem);
+        }
+
+        .piece.small.large {
+          font-size: clamp(0.68rem, 2.9vmin, 1.18rem);
+        }
+
+        .piece.small.piece-p {
+          font-size: clamp(0.63rem, 2.65vmin, 1.06rem);
+        }
+      }
+
+      @media (max-width: 520px) {
+        .brand-mark {
+          display: none;
+        }
+
+        .game-header {
+          gap: 8px;
+        }
+
+        .control {
+          padding-inline: 0.58rem;
+        }
+
+        .cpu-evaluation {
+          padding-inline: 0.4rem;
+        }
+
+        .cpu-evaluation-label {
+          display: none;
+        }
+      }
+
+      @media (max-height: 430px) and (orientation: landscape) {
+        .brand-mark {
+          display: none;
+        }
+
+        .game-header {
+          padding-inline: 8px;
+        }
       }
     </style>
   </head>
   <body>
-    <h1>ブラウザで遊べる対CPU将棋</h1>
     <div id="game-container">
-      <div id="message">あなたの番です。</div>
-      <div class="hand" id="cpu-hand">
-        <h2>後手の持ち駒</h2>
-        <div class="pieces" id="cpu-pieces"></div>
-      </div>
-      <div id="board"></div>
-      <div class="hand" id="player-hand">
-        <h2>先手の持ち駒</h2>
-        <div class="pieces" id="player-pieces"></div>
-      </div>
-      <div id="controls">
-        <button class="control" id="restart-button">リスタート</button>
-      </div>
+      <header class="game-header">
+        <div class="brand">
+          <span class="brand-mark">対 CPU</span>
+          <h1>将棋</h1>
+        </div>
+        <div id="message" role="status" aria-live="polite">あなたの番です。</div>
+        <div
+          class="cpu-evaluation"
+          id="cpu-evaluation"
+          role="img"
+          aria-label="CPUの形勢判断：互角"
+          title="CPUの形勢判断：互角"
+        >
+          <span class="cpu-evaluation-label">CPU</span>
+          <span id="cpu-evaluation-emoji" aria-hidden="true">😐</span>
+        </div>
+        <div id="controls">
+          <button class="control" id="restart-button" type="button">最初から</button>
+        </div>
+      </header>
+      <main id="play-area" aria-label="将棋盤と持ち駒">
+        <section class="hand" id="cpu-hand" aria-labelledby="cpu-hand-title">
+          <h2 id="cpu-hand-title"><span id="cpu-side-label">後手</span>の<br />持ち駒</h2>
+          <div class="pieces" id="cpu-pieces"></div>
+        </section>
+        <div id="board" role="grid" aria-label="将棋盤"></div>
+        <section class="hand" id="player-hand" aria-labelledby="player-hand-title">
+          <h2 id="player-hand-title"><span id="player-side-label">先手</span>の<br />持ち駒</h2>
+          <div class="pieces" id="player-pieces"></div>
+        </section>
+      </main>
     </div>
 
     <script>
@@ -296,9 +588,9 @@
       };
       const PROMOTED_SYMBOLS = {
         P: "と",
-        L: "成香",
-        N: "成桂",
-        S: "成銀",
+        L: "杏",
+        N: "圭",
+        S: "全",
         B: "馬",
         R: "龍",
       };
@@ -339,7 +631,7 @@
       let historyScores = new Map();
       const SEARCH_TIMEOUT = Symbol("search-timeout");
 
-      const MAJOR_PIECES = new Set(["B", "R", "K"]);
+      const LARGE_PIECES = new Set(["B", "R"]);
 
       const state = {
         board: [],
@@ -348,6 +640,9 @@
           white: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
         },
         currentPlayer: PLAYERS.PLAYER,
+        playerStarts: true,
+        cpuThinking: false,
+        gameId: 0,
         selected: null,
         winner: null,
         lastMove: null,
@@ -357,6 +652,10 @@
       const messageEl = document.getElementById("message");
       const cpuPiecesEl = document.getElementById("cpu-pieces");
       const playerPiecesEl = document.getElementById("player-pieces");
+      const cpuSideLabelEl = document.getElementById("cpu-side-label");
+      const playerSideLabelEl = document.getElementById("player-side-label");
+      const cpuEvaluationEl = document.getElementById("cpu-evaluation");
+      const cpuEvaluationEmojiEl = document.getElementById("cpu-evaluation-emoji");
       const restartButton = document.getElementById("restart-button");
 
       function createInitialBoard() {
@@ -367,38 +666,36 @@
           board[row][col] = { piece, owner, promoted };
         };
 
-        // CPU side (white)
-        const white = PLAYERS.CPU;
-        place(0, 0, "L", white);
-        place(0, 1, "N", white);
-        place(0, 2, "S", white);
-        place(0, 3, "G", white);
-        place(0, 4, "K", white);
-        place(0, 5, "G", white);
-        place(0, 6, "S", white);
-        place(0, 7, "N", white);
-        place(0, 8, "L", white);
-        place(1, 1, "R", white);
-        place(1, 7, "B", white);
+        const cpu = PLAYERS.CPU;
+        place(0, 0, "L", cpu);
+        place(0, 1, "N", cpu);
+        place(0, 2, "S", cpu);
+        place(0, 3, "G", cpu);
+        place(0, 4, "K", cpu);
+        place(0, 5, "G", cpu);
+        place(0, 6, "S", cpu);
+        place(0, 7, "N", cpu);
+        place(0, 8, "L", cpu);
+        place(1, 1, "R", cpu);
+        place(1, 7, "B", cpu);
         for (let col = 0; col < SIZE; col++) {
-          place(2, col, "P", white);
+          place(2, col, "P", cpu);
         }
 
-        // Player side (black)
-        const black = PLAYERS.PLAYER;
-        place(8, 0, "L", black);
-        place(8, 1, "N", black);
-        place(8, 2, "S", black);
-        place(8, 3, "G", black);
-        place(8, 4, "K", black);
-        place(8, 5, "G", black);
-        place(8, 6, "S", black);
-        place(8, 7, "N", black);
-        place(8, 8, "L", black);
-        place(7, 7, "R", black);
-        place(7, 1, "B", black);
+        const player = PLAYERS.PLAYER;
+        place(8, 0, "L", player);
+        place(8, 1, "N", player);
+        place(8, 2, "S", player);
+        place(8, 3, "G", player);
+        place(8, 4, "K", player);
+        place(8, 5, "G", player);
+        place(8, 6, "S", player);
+        place(8, 7, "N", player);
+        place(8, 8, "L", player);
+        place(7, 7, "R", player);
+        place(7, 1, "B", player);
         for (let col = 0; col < SIZE; col++) {
-          place(6, col, "P", black);
+          place(6, col, "P", player);
         }
 
         return board;
@@ -419,18 +716,24 @@
         };
       }
 
-      function resetGame() {
+      function resetGame(playerStarts = Math.random() < 0.5) {
+        state.gameId++;
         state.board = createInitialBoard();
         state.hands = {
           black: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
           white: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
         };
-        state.currentPlayer = PLAYERS.PLAYER;
+        state.playerStarts = playerStarts;
+        state.currentPlayer = playerStarts ? PLAYERS.PLAYER : PLAYERS.CPU;
+        state.cpuThinking = false;
         state.selected = null;
         state.winner = null;
         state.lastMove = null;
-        messageEl.textContent = "あなたの番です。";
+        playerSideLabelEl.textContent = playerStarts ? "先手" : "後手";
+        cpuSideLabelEl.textContent = playerStarts ? "後手" : "先手";
+        messageEl.textContent = playerStarts ? "先手、あなたの番です。" : "CPU が先手です。";
         render();
+        if (!playerStarts) beginCpuTurn();
       }
 
       function inBounds(row, col) {
@@ -458,11 +761,14 @@
         if (pieceData.promoted) {
           element.classList.add("promoted");
         }
-        if (MAJOR_PIECES.has(pieceData.piece)) {
-          element.classList.add("major");
+        if (LARGE_PIECES.has(pieceData.piece)) {
+          element.classList.add("large");
         }
         element.classList.add(owner === PLAYERS.PLAYER ? "player-owner" : "cpu-owner");
-        element.textContent = getDisplaySymbol(pieceData);
+        const symbol = document.createElement("span");
+        symbol.className = "piece-symbol";
+        symbol.textContent = getDisplaySymbol(pieceData);
+        element.appendChild(symbol);
         return element;
       }
 
@@ -1082,7 +1388,7 @@
         return score * weight;
       }
 
-      // Positive scores favour the human (black); negative scores favour the CPU.
+      // Positive scores favour the human; negative scores favour the CPU.
       function evaluate(stateSnapshot) {
         let total = 0;
         const attacks = {
@@ -1119,6 +1425,30 @@
         if (isKingInCheck(stateSnapshot, PLAYERS.PLAYER)) total -= CHECK_BONUS;
         if (isKingInCheck(stateSnapshot, PLAYERS.CPU)) total += CHECK_BONUS;
         return total;
+      }
+
+      function cpuJudgmentForScore(cpuAdvantage) {
+        if (cpuAdvantage >= 1800) return { emoji: "😎", label: "かなり優勢" };
+        if (cpuAdvantage >= 500) return { emoji: "🙂", label: "やや優勢" };
+        if (cpuAdvantage > -500) return { emoji: "😐", label: "互角" };
+        if (cpuAdvantage > -1800) return { emoji: "😟", label: "やや劣勢" };
+        return { emoji: "😣", label: "かなり劣勢" };
+      }
+
+      function getCpuJudgment() {
+        if (state.cpuThinking) return { emoji: "🤔", label: "考え中" };
+        if (state.winner === PLAYERS.CPU) return { emoji: "🥳", label: "勝ち" };
+        if (state.winner === PLAYERS.PLAYER) return { emoji: "😵", label: "負け" };
+        if (state.winner === "draw") return { emoji: "🤝", label: "引き分け" };
+        return cpuJudgmentForScore(-evaluate(state));
+      }
+
+      function renderCpuJudgment() {
+        const judgment = getCpuJudgment();
+        const description = `CPUの形勢判断：${judgment.label}`;
+        cpuEvaluationEmojiEl.textContent = judgment.emoji;
+        cpuEvaluationEl.setAttribute("aria-label", description);
+        cpuEvaluationEl.title = description;
       }
 
       function moveKey(move) {
@@ -1426,13 +1756,24 @@
         if (state.currentPlayer !== PLAYERS.PLAYER || state.winner) return;
         makeMove(move);
         if (checkForWinner()) return;
+        beginCpuTurn();
+      }
+
+      function beginCpuTurn() {
+        if (state.currentPlayer !== PLAYERS.CPU || state.winner) return;
+        state.cpuThinking = true;
         messageEl.textContent = "CPU が考えています...";
-        setTimeout(cpuTurn, 400);
+        renderCpuJudgment();
+        const scheduledGameId = state.gameId;
+        setTimeout(() => {
+          if (scheduledGameId === state.gameId) cpuTurn();
+        }, 400);
       }
 
       function cpuTurn() {
-        if (state.winner) return;
+        if (state.currentPlayer !== PLAYERS.CPU || state.winner) return;
         const move = chooseCpuMove(state);
+        state.cpuThinking = false;
         if (!move) {
           state.winner = PLAYERS.PLAYER;
           messageEl.textContent = "詰み！あなたの勝ちです。";
@@ -1467,11 +1808,18 @@
         boardEl.innerHTML = "";
         for (let row = 0; row < SIZE; row++) {
           for (let col = 0; col < SIZE; col++) {
-            const square = document.createElement("div");
+            const square = document.createElement("button");
             square.className = "square";
+            square.type = "button";
             square.dataset.row = row;
             square.dataset.col = col;
             const piece = state.board[row][col];
+            square.setAttribute(
+              "aria-label",
+              piece
+                ? `${row + 1}段${col + 1}筋 ${getDisplaySymbol(piece)}`
+                : `${row + 1}段${col + 1}筋 空き`
+            );
             if (piece) {
               const pieceNode = createPieceElement(piece);
               square.appendChild(pieceNode);
@@ -1544,6 +1892,9 @@
                 state.selected.piece === piece
               ) {
                 button.classList.add("selected");
+                button.setAttribute("aria-pressed", "true");
+              } else {
+                button.setAttribute("aria-pressed", "false");
               }
               button.addEventListener("click", () => onHandPieceClick(piece));
             } else {
@@ -1565,6 +1916,14 @@
         if (state.winner) return;
         const piece = state.board[row][col];
         if (state.selected && state.selected.type === "board") {
+          const isSelectedSquare =
+            state.selected.from.row === row && state.selected.from.col === col;
+          if (isSelectedSquare) {
+            state.selected = null;
+            render();
+            return;
+          }
+
           const selectedMove = state.selected.moves.filter(
             (m) => m.to.row === row && m.to.col === col
           );
@@ -1613,9 +1972,10 @@
       function render() {
         renderBoard();
         renderHands();
+        renderCpuJudgment();
       }
 
-      restartButton.addEventListener("click", resetGame);
+      restartButton.addEventListener("click", () => resetGame());
 
       resetGame();
     </script>
