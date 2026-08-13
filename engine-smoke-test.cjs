@@ -32,6 +32,7 @@ const expose = `
     PLAYERS, state, createInitialBoard, generateLegalMoves, applyMove,
     isKingInCheck, chooseCpuMove, moveKey, evaluate, openingStructureScore,
     onSquareClick, onHandPieceClick, resetGame, getDisplaySymbol, cpuJudgmentForScore,
+    getCpuThinkTimeMs,
     searchStats: () => ({
       searchedNodes,
       deepestTableEntry: Math.max(0, ...Array.from(transpositionTable.values(), (entry) => entry.depth)),
@@ -79,6 +80,7 @@ assert(engine.getDisplaySymbol({ piece: "L", promoted: true }) === "杏", "Promo
 assert(engine.cpuJudgmentForScore(0).emoji === "😐", "An even position should show the neutral emoji");
 assert(engine.cpuJudgmentForScore(700).emoji === "🙂", "A CPU edge should show a positive emoji");
 assert(engine.cpuJudgmentForScore(-700).emoji === "😟", "A CPU deficit should show a worried emoji");
+assert(engine.getCpuThinkTimeMs(engine.state) === 2250, "An even position should use a random 2-3 second budget");
 
 const initial = {
   board: engine.createInitialBoard(),
@@ -87,6 +89,16 @@ const initial = {
     white: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
   },
 };
+const cpuDisadvantage = {
+  board: initial.board.map((row) => row.map((piece) => (piece ? { ...piece } : null))),
+  hands: {
+    black: { ...initial.hands.black },
+    white: { ...initial.hands.white },
+  },
+};
+cpuDisadvantage.board[1][1] = null;
+assert(engine.getCpuThinkTimeMs(cpuDisadvantage) === 3000, "A CPU deficit should use a 3 second budget");
+
 const blackMoves = engine.generateLegalMoves(initial, engine.PLAYERS.PLAYER);
 assert(blackMoves.length > 20, "Initial position should have a healthy set of legal moves");
 assert(

@@ -327,7 +327,8 @@
         cursor: default;
       }
 
-      .piece-button:disabled {
+      .piece-button:disabled,
+      .piece-button.empty {
         opacity: 0.42;
       }
 
@@ -615,7 +616,9 @@
 
       const MATE_SCORE = 100000;
       const DRAW_SCORE = 0;
-      const CPU_THINK_TIME_MS = 1800;
+      const CPU_MIN_THINK_TIME_MS = 2000;
+      const CPU_MAX_THINK_TIME_MS = 3000;
+      const CPU_DISADVANTAGE_THRESHOLD = -500;
       const CPU_MAX_SEARCH_DEPTH = 7;
       const QUIESCENCE_DEPTH = 5;
       const TRANSPOSITION_TABLE_LIMIT = 60000;
@@ -631,7 +634,7 @@
       let historyScores = new Map();
       const SEARCH_TIMEOUT = Symbol("search-timeout");
 
-      const LARGE_PIECES = new Set(["B", "R"]);
+      const LARGE_PIECES = new Set(["B", "R", "K"]);
 
       const state = {
         board: [],
@@ -1430,9 +1433,16 @@
       function cpuJudgmentForScore(cpuAdvantage) {
         if (cpuAdvantage >= 1800) return { emoji: "😎", label: "かなり優勢" };
         if (cpuAdvantage >= 500) return { emoji: "🙂", label: "やや優勢" };
-        if (cpuAdvantage > -500) return { emoji: "😐", label: "互角" };
+        if (cpuAdvantage > CPU_DISADVANTAGE_THRESHOLD) return { emoji: "😐", label: "互角" };
         if (cpuAdvantage > -1800) return { emoji: "😟", label: "やや劣勢" };
         return { emoji: "😣", label: "かなり劣勢" };
+      }
+
+      function getCpuThinkTimeMs(stateSnapshot) {
+        const cpuAdvantage = -evaluate(stateSnapshot);
+        if (cpuAdvantage <= CPU_DISADVANTAGE_THRESHOLD) return CPU_MAX_THINK_TIME_MS;
+        return CPU_MIN_THINK_TIME_MS +
+          Math.random() * (CPU_MAX_THINK_TIME_MS - CPU_MIN_THINK_TIME_MS);
       }
 
       function getCpuJudgment() {
@@ -1659,7 +1669,7 @@
         let rootMoves = generateLegalMoves(stateSnapshot, PLAYERS.CPU);
         if (rootMoves.length === 0) return null;
 
-        searchDeadline = performance.now() + CPU_THINK_TIME_MS;
+        searchDeadline = performance.now() + getCpuThinkTimeMs(stateSnapshot);
         searchedNodes = 0;
         transpositionTable = new Map();
         killerMoves = [];
