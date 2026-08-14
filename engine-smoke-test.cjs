@@ -32,7 +32,7 @@ const expose = `
     PLAYERS, state, createInitialBoard, generateLegalMoves, applyMove,
     isKingInCheck, chooseCpuMove, moveKey, evaluate, openingStructureScore,
     onSquareClick, onHandPieceClick, resetGame, getDisplaySymbol, cpuJudgmentForScore,
-    getCpuThinkTimeMs,
+    getCpuThinkTimeMs, createPieceValueProfile,
     searchStats: () => ({
       searchedNodes,
       deepestTableEntry: Math.max(0, ...Array.from(transpositionTable.values(), (entry) => entry.depth)),
@@ -56,6 +56,42 @@ const engine = context.engine;
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+const cautiousRookProfile = engine.createPieceValueProfile(
+  (() => {
+    const values = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1];
+    return () => values.shift();
+  })()
+);
+const cautiousBishopProfile = engine.createPieceValueProfile(
+  (() => {
+    const values = [0.5, 0.5, 0.5, 0.5, 0.5, 1, 0];
+    return () => values.shift();
+  })()
+);
+assert(
+  cautiousRookProfile.pieces.R > cautiousBishopProfile.pieces.R,
+  "Different games should be able to value the rook differently"
+);
+assert(
+  cautiousBishopProfile.pieces.B > cautiousRookProfile.pieces.B,
+  "Different games should be able to value the bishop differently"
+);
+assert(cautiousRookProfile.pieces.K === 10000, "The king value must never be randomized");
+const profiledPosition = {
+  board: engine.createInitialBoard(),
+  hands: {
+    black: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
+    white: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
+  },
+  pieceValues: cautiousRookProfile.pieces,
+  promotedPieceValues: cautiousRookProfile.promoted,
+};
+const profiledMove = engine.generateLegalMoves(profiledPosition, engine.PLAYERS.PLAYER)[0];
+assert(
+  engine.applyMove(profiledPosition, profiledMove).pieceValues === cautiousRookProfile.pieces,
+  "A game's piece values should remain fixed while searching future positions"
+);
 
 engine.onSquareClick(6, 4);
 assert(engine.state.selected?.type === "board", "Clicking a player piece should select it");

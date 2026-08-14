@@ -613,6 +613,8 @@
         B: 1100,
         R: 1300,
       };
+      const STYLE_PIECES = ["P", "L", "N", "S", "G", "B", "R"];
+      const PIECE_VALUE_VARIANCE = 0.3;
 
       const MATE_SCORE = 100000;
       const DRAW_SCORE = 0;
@@ -649,6 +651,8 @@
         selected: null,
         winner: null,
         lastMove: null,
+        pieceValues: { ...PIECE_VALUES },
+        promotedPieceValues: { ...PROMOTED_VALUES },
       };
 
       const boardEl = document.getElementById("board");
@@ -719,8 +723,43 @@
         };
       }
 
+      function createPieceValueProfile(random = Math.random) {
+        // Change relative preferences while keeping the overall material scale
+        // close to normal, so positional and king-safety scores stay balanced.
+        const rawMultipliers = Object.fromEntries(
+          STYLE_PIECES.map((piece) => [
+            piece,
+            1 + (random() * 2 - 1) * PIECE_VALUE_VARIANCE,
+          ])
+        );
+        const averageMultiplier =
+          STYLE_PIECES.reduce((total, piece) => total + rawMultipliers[piece], 0) /
+          STYLE_PIECES.length;
+        const multipliers = Object.fromEntries(
+          STYLE_PIECES.map((piece) => [
+            piece,
+            Math.max(
+              1 - PIECE_VALUE_VARIANCE,
+              Math.min(1 + PIECE_VALUE_VARIANCE, rawMultipliers[piece] / averageMultiplier)
+            ),
+          ])
+        );
+        const pieces = { ...PIECE_VALUES };
+        const promoted = { ...PROMOTED_VALUES };
+
+        for (const piece of STYLE_PIECES) {
+          pieces[piece] = Math.round(PIECE_VALUES[piece] * multipliers[piece]);
+          if (piece in PROMOTED_VALUES) {
+            promoted[piece] = Math.round(PROMOTED_VALUES[piece] * multipliers[piece]);
+          }
+        }
+
+        return { pieces, promoted };
+      }
+
       function resetGame(playerStarts = Math.random() < 0.5) {
         state.gameId++;
+        const pieceValueProfile = createPieceValueProfile();
         state.board = createInitialBoard();
         state.hands = {
           black: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
@@ -732,6 +771,8 @@
         state.selected = null;
         state.winner = null;
         state.lastMove = null;
+        state.pieceValues = pieceValueProfile.pieces;
+        state.promotedPieceValues = pieceValueProfile.promoted;
         playerSideLabelEl.textContent = playerStarts ? "先手" : "後手";
         cpuSideLabelEl.textContent = playerStarts ? "後手" : "先手";
         messageEl.textContent = playerStarts ? "先手、あなたの番です。" : "CPU が先手です。";
@@ -810,12 +851,18 @@
         ];
       }
 
-      function getPromotedPieceValue(piece) {
-        return PROMOTED_VALUES[piece] ?? PIECE_VALUES[piece];
+      function getBasePieceValue(piece, stateSnapshot = state) {
+        return stateSnapshot.pieceValues?.[piece] ?? PIECE_VALUES[piece];
       }
 
-      function getPieceValue(piece, promoted) {
-        return promoted ? getPromotedPieceValue(piece) : PIECE_VALUES[piece];
+      function getPromotedPieceValue(piece, stateSnapshot = state) {
+        return stateSnapshot.promotedPieceValues?.[piece] ?? getBasePieceValue(piece, stateSnapshot);
+      }
+
+      function getPieceValue(piece, promoted, stateSnapshot = state) {
+        return promoted
+          ? getPromotedPieceValue(piece, stateSnapshot)
+          : getBasePieceValue(piece, stateSnapshot);
       }
 
       function promotionZone(owner, row) {
@@ -878,6 +925,8 @@
         return {
           board: nextBoard,
           hands: nextHands,
+          pieceValues: currentState.pieceValues,
+          promotedPieceValues: currentState.promotedPieceValues,
         };
       }
 
@@ -1405,7 +1454,7 @@
             if (!piece) continue;
             const sign = piece.owner === PLAYERS.PLAYER ? 1 : -1;
             const targets = getAttackTargets(stateSnapshot.board, row, col, piece.owner);
-            const value = getPieceValue(piece.piece, piece.promoted);
+            const value = getPieceValue(piece.piece, piece.promoted, stateSnapshot);
             for (const target of targets) {
               attacks[piece.owner][target.row * SIZE + target.col]++;
             }
@@ -1416,8 +1465,9 @@
 
         for (const piece of Object.keys(stateSnapshot.hands.black)) {
           const handFactor = piece === "B" || piece === "R" ? 1.05 : 0.92;
-          total += stateSnapshot.hands.black[piece] * PIECE_VALUES[piece] * handFactor;
-          total -= stateSnapshot.hands.white[piece] * PIECE_VALUES[piece] * handFactor;
+          const value = getBasePieceValue(piece, stateSnapshot);
+          total += stateSnapshot.hands.black[piece] * value * handFactor;
+          total -= stateSnapshot.hands.white[piece] * value * handFactor;
         }
 
         total += kingSafety(stateSnapshot, PLAYERS.PLAYER, attacks.white);
@@ -1502,17 +1552,21 @@
             );
             score += Math.max(0, 5 - distance) * 20;
           }
-          return score + PIECE_VALUES[move.piece] * 0.05;
+          return score + getBasePieceValue(move.piece, stateSnapshot) * 0.05;
         }
 
         const moving = stateSnapshot.board[move.from.row][move.from.col];
         const target = stateSnapshot.board[move.to.row][move.to.col];
         if (target) {
-          score += getPieceValue(target.piece, target.promoted) * 16;
-          score -= getPieceValue(moving.piece, moving.promoted);
+          score += getPieceValue(target.piece, target.promoted, stateSnapshot) * 16;
+          score -= getPieceValue(moving.piece, moving.promoted, stateSnapshot);
         }
         if (move.promote) {
-          score += (getPromotedPieceValue(moving.piece) - PIECE_VALUES[moving.piece]) * 6 + 500;
+          score +=
+            (getPromotedPieceValue(moving.piece, stateSnapshot) -
+              getBasePieceValue(moving.piece, stateSnapshot)) *
+              6 +
+            500;
         }
         return score;
       }
