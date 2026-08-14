@@ -131,6 +131,7 @@
 
       #controls {
         display: flex;
+        gap: 6px;
       }
 
       .cpu-evaluation {
@@ -208,6 +209,10 @@
 
       #player-hand {
         grid-area: player;
+      }
+
+      #play-area.flipped {
+        grid-template-areas: "player board cpu";
       }
 
       .square {
@@ -398,6 +403,14 @@
         transform: rotate(180deg) scale(var(--piece-scale));
       }
 
+      #play-area.flipped .piece.player-owner {
+        transform: rotate(180deg) scale(var(--piece-scale));
+      }
+
+      #play-area.flipped .piece.cpu-owner {
+        transform: scale(var(--piece-scale));
+      }
+
       .piece.promoted {
         color: #a11f1f;
       }
@@ -449,6 +462,13 @@
             "cpu"
             "board"
             "player";
+        }
+
+        #play-area.flipped {
+          grid-template-areas:
+            "player"
+            "board"
+            "cpu";
         }
 
         .hand {
@@ -553,6 +573,16 @@
           <span id="cpu-evaluation-emoji" aria-hidden="true">😐</span>
         </div>
         <div id="controls">
+          <button
+            class="control"
+            id="flip-button"
+            type="button"
+            aria-pressed="false"
+            aria-label="盤面を反転して、あなたを上にする"
+            title="盤面を反転して、あなたを上にする"
+          >
+            反転
+          </button>
           <button class="control" id="restart-button" type="button">最初から</button>
         </div>
       </header>
@@ -651,11 +681,13 @@
         selected: null,
         winner: null,
         lastMove: null,
+        boardFlipped: false,
         pieceValues: { ...PIECE_VALUES },
         promotedPieceValues: { ...PROMOTED_VALUES },
       };
 
       const boardEl = document.getElementById("board");
+      const playAreaEl = document.getElementById("play-area");
       const messageEl = document.getElementById("message");
       const cpuPiecesEl = document.getElementById("cpu-pieces");
       const playerPiecesEl = document.getElementById("player-pieces");
@@ -663,6 +695,7 @@
       const playerSideLabelEl = document.getElementById("player-side-label");
       const cpuEvaluationEl = document.getElementById("cpu-evaluation");
       const cpuEvaluationEmojiEl = document.getElementById("cpu-evaluation-emoji");
+      const flipButton = document.getElementById("flip-button");
       const restartButton = document.getElementById("restart-button");
 
       function createInitialBoard() {
@@ -1870,8 +1903,10 @@
 
       function renderBoard() {
         boardEl.innerHTML = "";
-        for (let row = 0; row < SIZE; row++) {
-          for (let col = 0; col < SIZE; col++) {
+        for (let displayRow = 0; displayRow < SIZE; displayRow++) {
+          for (let displayCol = 0; displayCol < SIZE; displayCol++) {
+            const row = state.boardFlipped ? SIZE - 1 - displayRow : displayRow;
+            const col = state.boardFlipped ? SIZE - 1 - displayCol : displayCol;
             const square = document.createElement("button");
             square.className = "square";
             square.type = "button";
@@ -2034,11 +2069,24 @@
       }
 
       function render() {
+        playAreaEl.className = state.boardFlipped ? "flipped" : "";
+        flipButton.setAttribute("aria-pressed", String(state.boardFlipped));
+        const flipDescription = state.boardFlipped
+          ? "盤面を反転して、あなたを下にする"
+          : "盤面を反転して、あなたを上にする";
+        flipButton.setAttribute("aria-label", flipDescription);
+        flipButton.setAttribute("title", flipDescription);
         renderBoard();
         renderHands();
         renderCpuJudgment();
       }
 
+      function flipBoard() {
+        state.boardFlipped = !state.boardFlipped;
+        render();
+      }
+
+      flipButton.addEventListener("click", flipBoard);
       restartButton.addEventListener("click", () => resetGame());
 
       resetGame();

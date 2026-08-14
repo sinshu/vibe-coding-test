@@ -32,7 +32,7 @@ const expose = `
     PLAYERS, state, createInitialBoard, generateLegalMoves, applyMove,
     isKingInCheck, chooseCpuMove, moveKey, evaluate, openingStructureScore,
     onSquareClick, onHandPieceClick, resetGame, getDisplaySymbol, cpuJudgmentForScore,
-    getCpuThinkTimeMs, createPieceValueProfile,
+    getCpuThinkTimeMs, createPieceValueProfile, flipBoard,
     searchStats: () => ({
       searchedNodes,
       deepestTableEntry: Math.max(0, ...Array.from(transpositionTable.values(), (entry) => entry.depth)),
@@ -106,9 +106,14 @@ assert(engine.state.selected === null, "Clicking the selected held piece should 
 engine.resetGame(false);
 assert(engine.state.currentPlayer === engine.PLAYERS.CPU, "CPU should move first when assigned sente");
 assert(engine.state.cpuThinking, "CPU should enter thinking state when moving first");
+engine.flipBoard();
+assert(engine.state.boardFlipped, "The board should be flippable while the CPU is thinking");
 engine.resetGame(true);
 assert(engine.state.currentPlayer === engine.PLAYERS.PLAYER, "Player should move first when assigned sente");
 assert(!engine.state.cpuThinking, "CPU should not think during the player's opening turn");
+assert(engine.state.boardFlipped, "Restarting should preserve the chosen board orientation");
+engine.flipBoard();
+assert(!engine.state.boardFlipped, "The board should return to its original orientation");
 
 assert(engine.getDisplaySymbol({ piece: "S", promoted: true }) === "全", "Promoted silver should use 全");
 assert(engine.getDisplaySymbol({ piece: "N", promoted: true }) === "圭", "Promoted knight should use 圭");
