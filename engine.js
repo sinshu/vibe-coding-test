@@ -72,6 +72,47 @@ const DIAGONAL_DIRECTIONS = [
   [-1, -1],
 ];
 const KING_DIRECTIONS = [...ORTHOGONAL_DIRECTIONS, ...DIAGONAL_DIRECTIONS];
+const NO_DIRECTIONS = [];
+const FORWARD_DIRECTIONS = {
+  [PLAYERS.PLAYER]: [[-1, 0]],
+  [PLAYERS.CPU]: [[1, 0]],
+};
+const GOLD_OFFSETS = {
+  [PLAYERS.PLAYER]: [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, 0]],
+  [PLAYERS.CPU]: [[1, -1], [1, 0], [1, 1], [0, -1], [0, 1], [-1, 0]],
+};
+const SILVER_OFFSETS = {
+  [PLAYERS.PLAYER]: [[-1, -1], [-1, 0], [-1, 1], [1, -1], [1, 1]],
+  [PLAYERS.CPU]: [[1, -1], [1, 0], [1, 1], [-1, -1], [-1, 1]],
+};
+const KNIGHT_OFFSETS = {
+  [PLAYERS.PLAYER]: [[-2, -1], [-2, 1]],
+  [PLAYERS.CPU]: [[2, -1], [2, 1]],
+};
+const EMPTY_MOVEMENT = { steps: NO_DIRECTIONS, slides: NO_DIRECTIONS };
+const BISHOP_MOVEMENT = { steps: NO_DIRECTIONS, slides: DIAGONAL_DIRECTIONS };
+const ROOK_MOVEMENT = { steps: NO_DIRECTIONS, slides: ORTHOGONAL_DIRECTIONS };
+const KING_MOVEMENT = { steps: KING_DIRECTIONS, slides: NO_DIRECTIONS };
+const PROMOTED_BISHOP_MOVEMENT = {
+  steps: ORTHOGONAL_DIRECTIONS,
+  slides: DIAGONAL_DIRECTIONS,
+};
+const PROMOTED_ROOK_MOVEMENT = {
+  steps: DIAGONAL_DIRECTIONS,
+  slides: ORTHOGONAL_DIRECTIONS,
+};
+const MOVEMENT_BY_OWNER = Object.fromEntries(
+  Object.values(PLAYERS).map((owner) => [
+    owner,
+    {
+      P: { steps: FORWARD_DIRECTIONS[owner], slides: NO_DIRECTIONS },
+      L: { steps: NO_DIRECTIONS, slides: FORWARD_DIRECTIONS[owner] },
+      N: { steps: KNIGHT_OFFSETS[owner], slides: NO_DIRECTIONS },
+      S: { steps: SILVER_OFFSETS[owner], slides: NO_DIRECTIONS },
+      G: { steps: GOLD_OFFSETS[owner], slides: NO_DIRECTIONS },
+    },
+  ])
+);
 
 function createEmptyBoard() {
   const emptyRow = () => Array.from({ length: SIZE }, () => null);
@@ -181,68 +222,28 @@ function forwardDirection(owner) {
   return owner === PLAYERS.PLAYER ? -1 : 1;
 }
 
-function getGoldOffsets(owner) {
-  const forward = forwardDirection(owner);
-  return [
-    [forward, -1],
-    [forward, 0],
-    [forward, 1],
-    [0, -1],
-    [0, 1],
-    [-forward, 0],
-  ];
-}
-
-function getSilverOffsets(owner) {
-  const forward = forwardDirection(owner);
-  return [
-    [forward, -1],
-    [forward, 0],
-    [forward, 1],
-    [-forward, -1],
-    [-forward, 1],
-  ];
-}
-
-function getKnightMoves(owner) {
-  const forward = forwardDirection(owner);
-  return [
-    [2 * forward, -1],
-    [2 * forward, 1],
-  ];
-}
-
 function getMovement(piece, owner) {
-  const forward = forwardDirection(owner);
   if (piece.promoted && ["P", "L", "N", "S"].includes(piece.piece)) {
-    return { steps: getGoldOffsets(owner), slides: [] };
+    return MOVEMENT_BY_OWNER[owner].G;
   }
-  if (piece.promoted && piece.piece === "B") {
-    return { steps: ORTHOGONAL_DIRECTIONS, slides: DIAGONAL_DIRECTIONS };
-  }
-  if (piece.promoted && piece.piece === "R") {
-    return { steps: DIAGONAL_DIRECTIONS, slides: ORTHOGONAL_DIRECTIONS };
-  }
+  if (piece.promoted && piece.piece === "B") return PROMOTED_BISHOP_MOVEMENT;
+  if (piece.promoted && piece.piece === "R") return PROMOTED_ROOK_MOVEMENT;
 
   switch (piece.piece) {
     case "P":
-      return { steps: [[forward, 0]], slides: [] };
     case "L":
-      return { steps: [], slides: [[forward, 0]] };
     case "N":
-      return { steps: getKnightMoves(owner), slides: [] };
     case "S":
-      return { steps: getSilverOffsets(owner), slides: [] };
     case "G":
-      return { steps: getGoldOffsets(owner), slides: [] };
+      return MOVEMENT_BY_OWNER[owner][piece.piece];
     case "B":
-      return { steps: [], slides: DIAGONAL_DIRECTIONS };
+      return BISHOP_MOVEMENT;
     case "R":
-      return { steps: [], slides: ORTHOGONAL_DIRECTIONS };
+      return ROOK_MOVEMENT;
     case "K":
-      return { steps: KING_DIRECTIONS, slides: [] };
+      return KING_MOVEMENT;
     default:
-      return { steps: [], slides: [] };
+      return EMPTY_MOVEMENT;
   }
 }
 
@@ -284,7 +285,7 @@ function promotionAvailable(piece, owner, fromRow, toRow, alreadyPromoted) {
 }
 
 function addMove(moves, move, stateSnapshot) {
-  const nextState = applyMove(stateSnapshot, move);
+  const nextState = applySearchMove(stateSnapshot, move);
   if (!isKingInCheck(nextState, move.player)) {
     moves.push(move);
   }
@@ -314,6 +315,42 @@ function applyMove(currentState, move) {
     const shouldPromote = promote && PROMOTABLE.has(movingPiece.piece);
     movingPiece.promoted = shouldPromote ? true : movingPiece.promoted;
 
+    nextBoard[to.row][to.col] = movingPiece;
+  }
+
+  return {
+    board: nextBoard,
+    hands: nextHands,
+    pieceValues: currentState.pieceValues,
+    promotedPieceValues: currentState.promotedPieceValues,
+  };
+}
+
+function applySearchMove(currentState, move) {
+  const nextBoard = currentState.board.slice();
+  let nextHands = currentState.hands;
+
+  if (move.drop) {
+    const { to, piece, player } = move;
+    nextBoard[to.row] = currentState.board[to.row].slice();
+    nextBoard[to.row][to.col] = { piece, owner: player, promoted: false };
+    nextHands = cloneHands(currentState.hands);
+    nextHands[player][piece] -= 1;
+  } else {
+    const { from, to, promote, player } = move;
+    nextBoard[from.row] = currentState.board[from.row].slice();
+    if (to.row !== from.row) nextBoard[to.row] = currentState.board[to.row].slice();
+
+    const movingPiece = { ...currentState.board[from.row][from.col] };
+    const captured = currentState.board[to.row][to.col];
+    nextBoard[from.row][from.col] = null;
+
+    if (captured && captured.piece !== "K") {
+      nextHands = cloneHands(currentState.hands);
+      nextHands[player][captured.piece] += 1;
+    }
+
+    if (promote && PROMOTABLE.has(movingPiece.piece)) movingPiece.promoted = true;
     nextBoard[to.row][to.col] = movingPiece;
   }
 
@@ -366,15 +403,38 @@ function getAttackTargets(board, row, col, owner) {
   return targets;
 }
 
+function pieceAttacksSquare(board, row, col, piece, squareRow, squareCol) {
+  const movement = getMovement(piece, piece.owner);
+
+  for (const [dr, dc] of movement.steps) {
+    if (row + dr !== squareRow || col + dc !== squareCol) continue;
+    const target = board[squareRow][squareCol];
+    return !target || target.owner !== piece.owner;
+  }
+
+  for (const [dr, dc] of movement.slides) {
+    let targetRow = row + dr;
+    let targetCol = col + dc;
+    while (inBounds(targetRow, targetCol)) {
+      if (targetRow === squareRow && targetCol === squareCol) {
+        const target = board[targetRow][targetCol];
+        return !target || target.owner !== piece.owner;
+      }
+      if (board[targetRow][targetCol]) break;
+      targetRow += dr;
+      targetCol += dc;
+    }
+  }
+
+  return false;
+}
+
 function isSquareAttacked(board, hands, squareRow, squareCol, byPlayer) {
   for (let row = 0; row < SIZE; row++) {
     for (let col = 0; col < SIZE; col++) {
       const piece = board[row][col];
       if (!piece || piece.owner !== byPlayer) continue;
-      const attacks = getAttackTargets(board, row, col, byPlayer);
-      if (attacks.some((sq) => sq.row === squareRow && sq.col === squareCol)) {
-        return true;
-      }
+      if (pieceAttacksSquare(board, row, col, piece, squareRow, squareCol)) return true;
     }
   }
   return false;
@@ -465,12 +525,25 @@ function generateMovesForPiece(stateSnapshot, row, col, owner) {
 function generateDropMoves(stateSnapshot, owner) {
   const moves = [];
   const hand = stateSnapshot.hands[owner];
-  for (const piece of Object.keys(hand)) {
+  let blockedPawnFiles = null;
+  if (hand.P > 0) {
+    blockedPawnFiles = Array(SIZE).fill(false);
+    for (let row = 0; row < SIZE; row++) {
+      for (let col = 0; col < SIZE; col++) {
+        const piece = stateSnapshot.board[row][col];
+        if (piece?.owner === owner && piece.piece === "P" && !piece.promoted) {
+          blockedPawnFiles[col] = true;
+        }
+      }
+    }
+  }
+
+  for (const piece of HAND_PIECES) {
     if (hand[piece] <= 0) continue;
     for (let row = 0; row < SIZE; row++) {
       for (let col = 0; col < SIZE; col++) {
         if (stateSnapshot.board[row][col]) continue;
-        if (!canDropPiece(owner, piece, row, col, stateSnapshot)) continue;
+        if (!canDropPiece(owner, piece, row, col, stateSnapshot, blockedPawnFiles)) continue;
         const move = {
           drop: true,
           piece,
@@ -484,13 +557,17 @@ function generateDropMoves(stateSnapshot, owner) {
   return moves;
 }
 
-function canDropPiece(owner, piece, row, col, stateSnapshot) {
+function canDropPiece(owner, piece, row, col, stateSnapshot, blockedPawnFiles = null) {
   if (piece === "P") {
     if ((owner === PLAYERS.PLAYER && row === 0) || (owner === PLAYERS.CPU && row === 8)) return false;
-    for (let r = 0; r < SIZE; r++) {
-      const existing = stateSnapshot.board[r][col];
-      if (existing && existing.owner === owner && existing.piece === "P" && !existing.promoted) {
-        return false;
+    if (blockedPawnFiles) {
+      if (blockedPawnFiles[col]) return false;
+    } else {
+      for (let r = 0; r < SIZE; r++) {
+        const existing = stateSnapshot.board[r][col];
+        if (existing && existing.owner === owner && existing.piece === "P" && !existing.promoted) {
+          return false;
+        }
       }
     }
   }
@@ -549,8 +626,12 @@ function pieceSquareBonus(piece, row, col) {
   return bonus;
 }
 
-function kingSafety(stateSnapshot, owner, enemyAttacks) {
-  const king = findKing(stateSnapshot.board, owner);
+function kingSafety(
+  stateSnapshot,
+  owner,
+  enemyAttacks,
+  king = findKing(stateSnapshot.board, owner)
+) {
   if (!king) return -MATE_SCORE;
   const forward = forwardDirection(owner);
   let defenderStrength = 0;
@@ -588,24 +669,31 @@ function kingSafety(stateSnapshot, owner, enemyAttacks) {
   return defenderStrength + shieldPawns * 22 + edgeShelter - pressure * 13;
 }
 
-function openingWeight(stateSnapshot) {
-  let piecesOnBoard = 0;
-  for (const row of stateSnapshot.board) {
-    for (const piece of row) {
-      if (piece) piecesOnBoard++;
+function openingWeight(stateSnapshot, knownPiecesOnBoard = null) {
+  let piecesOnBoard = knownPiecesOnBoard;
+  if (piecesOnBoard === null) {
+    piecesOnBoard = 0;
+    for (const row of stateSnapshot.board) {
+      for (const piece of row) {
+        if (piece) piecesOnBoard++;
+      }
     }
   }
   return Math.max(0, Math.min(1, (piecesOnBoard - 26) / 14));
 }
 
-function openingStructureScore(stateSnapshot, owner, weight = openingWeight(stateSnapshot)) {
+function openingStructureScore(
+  stateSnapshot,
+  owner,
+  weight = openingWeight(stateSnapshot),
+  king = findKing(stateSnapshot.board, owner)
+) {
   if (weight <= 0) return 0;
 
   const board = stateSnapshot.board;
   const homeRow = owner === PLAYERS.PLAYER ? 8 : 0;
   const pawnStartRow = owner === PLAYERS.PLAYER ? 6 : 2;
   const forward = forwardDirection(owner);
-  const king = findKing(board, owner);
   let score = 0;
   let rook = null;
   let bishop = null;
@@ -675,15 +763,21 @@ function openingStructureScore(stateSnapshot, owner, weight = openingWeight(stat
 
 function evaluate(stateSnapshot) {
   let total = 0;
+  let piecesOnBoard = 0;
   const attacks = {
     black: Array(SIZE * SIZE).fill(0),
     white: Array(SIZE * SIZE).fill(0),
   };
+  const kings = { black: null, white: null };
 
   for (let row = 0; row < SIZE; row++) {
     for (let col = 0; col < SIZE; col++) {
       const piece = stateSnapshot.board[row][col];
       if (!piece) continue;
+      piecesOnBoard++;
+      if (piece.piece === "K" && !kings[piece.owner]) {
+        kings[piece.owner] = { row, col };
+      }
       const sign = piece.owner === PLAYERS.PLAYER ? 1 : -1;
       const targets = getAttackTargets(stateSnapshot.board, row, col, piece.owner);
       const value = getPieceValue(piece.piece, piece.promoted, stateSnapshot);
@@ -695,20 +789,27 @@ function evaluate(stateSnapshot) {
     }
   }
 
-  for (const piece of Object.keys(stateSnapshot.hands.black)) {
+  for (const piece of HAND_PIECES) {
     const handFactor = piece === "B" || piece === "R" ? 1.05 : 0.92;
     const value = getBasePieceValue(piece, stateSnapshot);
     total += stateSnapshot.hands.black[piece] * value * handFactor;
     total -= stateSnapshot.hands.white[piece] * value * handFactor;
   }
 
-  total += kingSafety(stateSnapshot, PLAYERS.PLAYER, attacks.white);
-  total -= kingSafety(stateSnapshot, PLAYERS.CPU, attacks.black);
-  const opening = openingWeight(stateSnapshot);
-  total += openingStructureScore(stateSnapshot, PLAYERS.PLAYER, opening);
-  total -= openingStructureScore(stateSnapshot, PLAYERS.CPU, opening);
-  if (isKingInCheck(stateSnapshot, PLAYERS.PLAYER)) total -= CHECK_BONUS;
-  if (isKingInCheck(stateSnapshot, PLAYERS.CPU)) total += CHECK_BONUS;
+  total += kingSafety(stateSnapshot, PLAYERS.PLAYER, attacks.white, kings.black);
+  total -= kingSafety(stateSnapshot, PLAYERS.CPU, attacks.black, kings.white);
+  const opening = openingWeight(stateSnapshot, piecesOnBoard);
+  total += openingStructureScore(stateSnapshot, PLAYERS.PLAYER, opening, kings.black);
+  total -= openingStructureScore(stateSnapshot, PLAYERS.CPU, opening, kings.white);
+
+  const playerKing = kings.black;
+  const cpuKing = kings.white;
+  if (!playerKing || attacks.white[playerKing.row * SIZE + playerKing.col] > 0) {
+    total -= CHECK_BONUS;
+  }
+  if (!cpuKing || attacks.black[cpuKing.row * SIZE + cpuKing.col] > 0) {
+    total += CHECK_BONUS;
+  }
   return total;
 }
 
@@ -867,7 +968,7 @@ function quiescence(stateSnapshot, currentPlayer, alpha, beta, ply, depthLeft, s
       value = Math.max(
         value,
         quiescence(
-          applyMove(stateSnapshot, move),
+          applySearchMove(stateSnapshot, move),
           PLAYERS.CPU,
           alpha,
           beta,
@@ -887,7 +988,7 @@ function quiescence(stateSnapshot, currentPlayer, alpha, beta, ply, depthLeft, s
     value = Math.min(
       value,
       quiescence(
-        applyMove(stateSnapshot, move),
+        applySearchMove(stateSnapshot, move),
         PLAYERS.PLAYER,
         alpha,
         beta,
@@ -943,7 +1044,7 @@ function alphaBeta(stateSnapshot, depth, currentPlayer, alpha, beta, ply, search
   let value = currentPlayer === PLAYERS.PLAYER ? -Infinity : Infinity;
   for (const move of moves) {
     const score = alphaBeta(
-      applyMove(stateSnapshot, move),
+      applySearchMove(stateSnapshot, move),
       depth - 1,
       opponentOf(currentPlayer),
       alpha,
@@ -1005,7 +1106,7 @@ function chooseCpuMove(stateSnapshot) {
   let completedBestScore = Infinity;
   let previousScores = new Map();
   for (const move of rootMoves) {
-    const score = evaluate(applyMove(stateSnapshot, move));
+    const score = evaluate(applySearchMove(stateSnapshot, move));
     previousScores.set(moveKey(move), score);
     if (score < completedBestScore) {
       completedBestScore = score;
@@ -1031,7 +1132,7 @@ function chooseCpuMove(stateSnapshot) {
       let beta = Infinity;
       for (const move of rootMoves) {
         const score = alphaBeta(
-          applyMove(stateSnapshot, move),
+          applySearchMove(stateSnapshot, move),
           depth - 1,
           PLAYERS.PLAYER,
           -Infinity,
