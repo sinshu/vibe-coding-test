@@ -583,6 +583,9 @@
           >
             反転
           </button>
+          <button class="control" id="copy-kif-button" type="button" hidden>
+            KIFをコピー
+          </button>
           <button class="control" id="restart-button" type="button">最初から</button>
         </div>
       </header>
@@ -681,6 +684,8 @@
         selected: null,
         winner: null,
         lastMove: null,
+        moveHistory: [],
+        startedAt: new Date(),
         boardFlipped: false,
         pieceValues: { ...PIECE_VALUES },
         promotedPieceValues: { ...PROMOTED_VALUES },
@@ -696,6 +701,7 @@
       const cpuEvaluationEl = document.getElementById("cpu-evaluation");
       const cpuEvaluationEmojiEl = document.getElementById("cpu-evaluation-emoji");
       const flipButton = document.getElementById("flip-button");
+      const copyKifButton = document.getElementById("copy-kif-button");
       const restartButton = document.getElementById("restart-button");
 
       function createInitialBoard() {
@@ -804,6 +810,8 @@
         state.selected = null;
         state.winner = null;
         state.lastMove = null;
+        state.moveHistory = [];
+        state.startedAt = new Date();
         state.pieceValues = pieceValueProfile.pieces;
         state.promotedPieceValues = pieceValueProfile.promoted;
         playerSideLabelEl.textContent = playerStarts ? "先手" : "後手";
@@ -1827,6 +1835,7 @@
       }
 
       function makeMove(move) {
+        const record = createMoveRecord(state, move);
         const applied = applyMove(state, move);
         state.lastMove = move.drop
           ? {
@@ -1844,6 +1853,7 @@
             };
         state.board = applied.board;
         state.hands = applied.hands;
+        state.moveHistory.push(record);
         state.selected = null;
         state.currentPlayer = state.currentPlayer === PLAYERS.PLAYER ? PLAYERS.CPU : PLAYERS.PLAYER;
         render();
@@ -2070,6 +2080,8 @@
 
       function render() {
         playAreaEl.className = state.boardFlipped ? "flipped" : "";
+        copyKifButton.hidden = !state.winner;
+        copyKifButton.textContent = "KIFをコピー";
         flipButton.setAttribute("aria-pressed", String(state.boardFlipped));
         const flipDescription = state.boardFlipped
           ? "盤面を反転して、あなたを下にする"
@@ -2086,7 +2098,127 @@
         render();
       }
 
+      const KIF_FILES = ["９", "８", "７", "６", "５", "４", "３", "２", "１"];
+      const KIF_RANKS = ["一", "二", "三", "四", "五", "六", "七", "八", "九"];
+
+      function createMoveRecord(stateSnapshot, move) {
+        const movingPiece = move.drop ? null : stateSnapshot.board[move.from.row][move.from.col];
+        return {
+          drop: !!move.drop,
+          piece: move.drop ? move.piece : movingPiece.piece,
+          wasPromoted: !!movingPiece?.promoted,
+          promote: !!move.promote,
+          player: move.player,
+          from: move.drop ? null : { ...move.from },
+          to: { ...move.to },
+        };
+      }
+
+      function toKifSquare(square, rotateBoard) {
+        return rotateBoard
+          ? { row: SIZE - 1 - square.row, col: SIZE - 1 - square.col }
+          : square;
+      }
+
+      function formatKifMove(record, previousRecord = null, rotateBoard = !state.playerStarts) {
+        const sameDestination =
+          previousRecord &&
+          previousRecord.to.row === record.to.row &&
+          previousRecord.to.col === record.to.col;
+        const destinationSquare = toKifSquare(record.to, rotateBoard);
+        const destination = sameDestination
+          ? "同　"
+          : `${KIF_FILES[destinationSquare.col]}${KIF_RANKS[destinationSquare.row]}`;
+        const symbol = record.wasPromoted
+          ? PROMOTED_SYMBOLS[record.piece]
+          : PIECE_SYMBOLS[record.piece];
+        const qualifier = record.drop
+          ? "打"
+          : record.promote
+            ? "成"
+            : "";
+        const originSquare = record.drop ? null : toKifSquare(record.from, rotateBoard);
+        const origin = record.drop ? "" : `(${SIZE - originSquare.col}${originSquare.row + 1})`;
+        return `${destination}${symbol}${qualifier}${origin}`;
+      }
+
+      function formatKifDate(date) {
+        const pad = (value) => String(value).padStart(2, "0");
+        return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(
+          date.getHours()
+        )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+      }
+
+      function getKifSideForPlayer(player) {
+        const playerIsSente = state.playerStarts;
+        const isSente = player === PLAYERS.PLAYER ? playerIsSente : !playerIsSente;
+        return isSente ? "先手" : "後手";
+      }
+
+      function generateKif() {
+        const sente = state.playerStarts ? "あなた" : "CPU";
+        const gote = state.playerStarts ? "CPU" : "あなた";
+        const lines = [
+          "# KIF形式棋譜ファイル",
+          "# ブラウザで遊べる対CPU将棋",
+          `開始日時：${formatKifDate(state.startedAt)}`,
+          "手合割：平手",
+          `先手：${sente}`,
+          `後手：${gote}`,
+          "手数----指手---------消費時間--",
+        ];
+
+        state.moveHistory.forEach((record, index) => {
+          const notation = formatKifMove(record, state.moveHistory[index - 1]);
+          lines.push(`${String(index + 1).padStart(4, " ")} ${notation}`);
+        });
+
+        if (state.winner === "draw") {
+          lines.push(`${String(state.moveHistory.length + 1).padStart(4, " ")} 千日手`);
+          lines.push(`まで${state.moveHistory.length}手で引き分け`);
+        } else if (state.winner) {
+          lines.push(`${String(state.moveHistory.length + 1).padStart(4, " ")} 詰み`);
+          lines.push(
+            `まで${state.moveHistory.length}手で${getKifSideForPlayer(state.winner)}の勝ち`
+          );
+        }
+        return `${lines.join("\r\n")}\r\n`;
+      }
+
+      async function writeTextToClipboard(text) {
+        if (globalThis.navigator?.clipboard?.writeText) {
+          try {
+            await globalThis.navigator.clipboard.writeText(text);
+            return;
+          } catch (error) {
+            // Local files and older browsers may deny the asynchronous API.
+          }
+        }
+
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand("copy");
+        textarea.remove();
+        if (!copied) throw new Error("Clipboard copy failed");
+      }
+
+      async function copyKifToClipboard() {
+        if (!state.winner) return;
+        try {
+          await writeTextToClipboard(generateKif());
+          copyKifButton.textContent = "コピー済み";
+        } catch (error) {
+          copyKifButton.textContent = "コピー失敗";
+        }
+      }
+
       flipButton.addEventListener("click", flipBoard);
+      copyKifButton.addEventListener("click", copyKifToClipboard);
       restartButton.addEventListener("click", () => resetGame());
 
       resetGame();

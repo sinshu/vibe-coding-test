@@ -33,6 +33,7 @@ const expose = `
     isKingInCheck, chooseCpuMove, moveKey, evaluate, openingStructureScore,
     onSquareClick, onHandPieceClick, resetGame, getDisplaySymbol, cpuJudgmentForScore,
     getCpuThinkTimeMs, createPieceValueProfile, flipBoard,
+    makeMove, createMoveRecord, formatKifMove, generateKif, render, copyKifButton,
     searchStats: () => ({
       searchedNodes,
       deepestTableEntry: Math.max(0, ...Array.from(transpositionTable.values(), (entry) => entry.depth)),
@@ -114,6 +115,63 @@ assert(!engine.state.cpuThinking, "CPU should not think during the player's open
 assert(engine.state.boardFlipped, "Restarting should preserve the chosen board orientation");
 engine.flipBoard();
 assert(!engine.state.boardFlipped, "The board should return to its original orientation");
+
+engine.makeMove({
+  from: { row: 6, col: 4 },
+  to: { row: 5, col: 4 },
+  promote: false,
+  player: engine.PLAYERS.PLAYER,
+});
+assert(engine.state.moveHistory.length === 1, "Played moves should be recorded for KIF export");
+engine.state.winner = engine.PLAYERS.PLAYER;
+engine.render();
+assert(!engine.copyKifButton.hidden, "The KIF copy button should appear after the game");
+const playerWinKif = engine.generateKif();
+assert(playerWinKif.includes("先手：あなた"), "KIF should identify the player as sente");
+assert(playerWinKif.includes("   1 ５六歩(57)"), "KIF should use standard Japanese coordinates");
+assert(playerWinKif.includes("   2 詰み"), "KIF should include checkmate as a terminal move");
+assert(playerWinKif.includes("まで1手で先手の勝ち"), "KIF should include the game result");
+
+const dropRecord = {
+  drop: true,
+  piece: "P",
+  wasPromoted: false,
+  promote: false,
+  player: engine.PLAYERS.PLAYER,
+  from: null,
+  to: { row: 4, col: 4 },
+};
+assert(engine.formatKifMove(dropRecord) === "５五歩打", "KIF should mark dropped pieces with 打");
+const promotedRecord = {
+  drop: false,
+  piece: "P",
+  wasPromoted: false,
+  promote: true,
+  player: engine.PLAYERS.PLAYER,
+  from: { row: 3, col: 4 },
+  to: { row: 2, col: 4 },
+};
+assert(
+  engine.formatKifMove(promotedRecord, { to: { row: 2, col: 4 } }) === "同　歩成(54)",
+  "KIF should represent same-square moves and promotions"
+);
+engine.resetGame(false);
+engine.makeMove({
+  from: { row: 2, col: 4 },
+  to: { row: 3, col: 4 },
+  promote: false,
+  player: engine.PLAYERS.CPU,
+});
+engine.state.winner = engine.PLAYERS.CPU;
+const cpuSenteKif = engine.generateKif();
+assert(cpuSenteKif.includes("先手：CPU"), "KIF should identify CPU as sente when it starts");
+assert(
+  cpuSenteKif.includes("   1 ５六歩(57)"),
+  "KIF should rotate coordinates when CPU plays sente from the top"
+);
+assert(cpuSenteKif.includes("まで1手で先手の勝ち"), "KIF result should follow assigned sides");
+engine.resetGame(true);
+assert(engine.copyKifButton.hidden, "The KIF copy button should be hidden during a game");
 
 assert(engine.getDisplaySymbol({ piece: "S", promoted: true }) === "全", "Promoted silver should use 全");
 assert(engine.getDisplaySymbol({ piece: "N", promoted: true }) === "圭", "Promoted knight should use 圭");
