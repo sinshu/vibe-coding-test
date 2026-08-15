@@ -25,21 +25,9 @@ const document = {
   },
 };
 
-const html = fs.readFileSync("index.html", "utf8");
-const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-const expose = `
-  globalThis.engine = {
-    PLAYERS, state, createInitialBoard, generateLegalMoves, applyMove,
-    isKingInCheck, chooseCpuMove, moveKey, evaluate, openingStructureScore,
-    onSquareClick, onHandPieceClick, resetGame, getDisplaySymbol, cpuJudgmentForScore,
-    getCpuThinkTimeMs, createPieceValueProfile, flipBoard,
-    makeMove, createMoveRecord, formatKifMove, generateKif, render, copyKifButton,
-    searchStats: () => ({
-      searchedNodes,
-      deepestTableEntry: Math.max(0, ...Array.from(transpositionTable.values(), (entry) => entry.depth)),
-    })
-  };
-`;
+const source = ["engine.js", "kif.js", "app.js"]
+  .map((file) => fs.readFileSync(file, "utf8"))
+  .join("\n");
 const testMath = Object.create(Math);
 testMath.random = () => 0.25;
 
@@ -51,11 +39,20 @@ const context = {
   setTimeout,
   console,
 };
-vm.runInNewContext(source + expose, context, { filename: "index.html" });
-const engine = context.engine;
+vm.runInNewContext(source, context, { filename: "app.js" });
+const engine = context.ShogiEngine;
+const kif = context.ShogiKif;
+const app = context.ShogiApp;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function createBarePosition() {
+  const board = engine.createEmptyBoard();
+  board[8][0] = { piece: "K", owner: engine.PLAYERS.PLAYER, promoted: false };
+  board[0][8] = { piece: "K", owner: engine.PLAYERS.CPU, promoted: false };
+  return engine.createPosition({ board });
 }
 
 const cautiousRookProfile = engine.createPieceValueProfile(
@@ -79,54 +76,49 @@ assert(
   "Different games should be able to value the bishop differently"
 );
 assert(cautiousRookProfile.pieces.K === 10000, "The king value must never be randomized");
-const profiledPosition = {
-  board: engine.createInitialBoard(),
-  hands: {
-    black: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
-    white: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
-  },
+const profiledPosition = engine.createPosition({
   pieceValues: cautiousRookProfile.pieces,
   promotedPieceValues: cautiousRookProfile.promoted,
-};
+});
 const profiledMove = engine.generateLegalMoves(profiledPosition, engine.PLAYERS.PLAYER)[0];
 assert(
   engine.applyMove(profiledPosition, profiledMove).pieceValues === cautiousRookProfile.pieces,
   "A game's piece values should remain fixed while searching future positions"
 );
 
-engine.onSquareClick(6, 4);
-assert(engine.state.selected?.type === "board", "Clicking a player piece should select it");
-engine.onSquareClick(6, 4);
-assert(engine.state.selected === null, "Clicking the selected board piece should cancel selection");
+app.onSquareClick(6, 4);
+assert(app.state.selected?.type === "board", "Clicking a player piece should select it");
+app.onSquareClick(6, 4);
+assert(app.state.selected === null, "Clicking the selected board piece should cancel selection");
 
-engine.state.hands.black.P = 1;
-engine.onHandPieceClick("P");
-assert(engine.state.selected?.type === "drop", "Clicking a held piece should select it");
-engine.onHandPieceClick("P");
-assert(engine.state.selected === null, "Clicking the selected held piece should cancel selection");
-engine.resetGame(false);
-assert(engine.state.currentPlayer === engine.PLAYERS.CPU, "CPU should move first when assigned sente");
-assert(engine.state.cpuThinking, "CPU should enter thinking state when moving first");
-engine.flipBoard();
-assert(engine.state.boardFlipped, "The board should be flippable while the CPU is thinking");
-engine.resetGame(true);
-assert(engine.state.currentPlayer === engine.PLAYERS.PLAYER, "Player should move first when assigned sente");
-assert(!engine.state.cpuThinking, "CPU should not think during the player's opening turn");
-assert(engine.state.boardFlipped, "Restarting should preserve the chosen board orientation");
-engine.flipBoard();
-assert(!engine.state.boardFlipped, "The board should return to its original orientation");
+app.state.hands.black.P = 1;
+app.onHandPieceClick("P");
+assert(app.state.selected?.type === "drop", "Clicking a held piece should select it");
+app.onHandPieceClick("P");
+assert(app.state.selected === null, "Clicking the selected held piece should cancel selection");
+app.resetGame(false);
+assert(app.state.currentPlayer === engine.PLAYERS.CPU, "CPU should move first when assigned sente");
+assert(app.state.cpuThinking, "CPU should enter thinking state when moving first");
+app.flipBoard();
+assert(app.state.boardFlipped, "The board should be flippable while the CPU is thinking");
+app.resetGame(true);
+assert(app.state.currentPlayer === engine.PLAYERS.PLAYER, "Player should move first when assigned sente");
+assert(!app.state.cpuThinking, "CPU should not think during the player's opening turn");
+assert(app.state.boardFlipped, "Restarting should preserve the chosen board orientation");
+app.flipBoard();
+assert(!app.state.boardFlipped, "The board should return to its original orientation");
 
-engine.makeMove({
+app.makeMove({
   from: { row: 6, col: 4 },
   to: { row: 5, col: 4 },
   promote: false,
   player: engine.PLAYERS.PLAYER,
 });
-assert(engine.state.moveHistory.length === 1, "Played moves should be recorded for KIF export");
-engine.state.winner = engine.PLAYERS.PLAYER;
-engine.render();
-assert(!engine.copyKifButton.hidden, "The KIF copy button should appear after the game");
-const playerWinKif = engine.generateKif();
+assert(app.state.moveHistory.length === 1, "Played moves should be recorded for KIF export");
+app.state.winner = engine.PLAYERS.PLAYER;
+app.render();
+assert(!app.copyKifButton.hidden, "The KIF copy button should appear after the game");
+const playerWinKif = kif.generate(app.state);
 assert(playerWinKif.includes("先手：あなた"), "KIF should identify the player as sente");
 assert(playerWinKif.includes("   1 ５六歩(57)"), "KIF should use standard Japanese coordinates");
 assert(playerWinKif.includes("   2 詰み"), "KIF should include checkmate as a terminal move");
@@ -141,7 +133,7 @@ const dropRecord = {
   from: null,
   to: { row: 4, col: 4 },
 };
-assert(engine.formatKifMove(dropRecord) === "５五歩打", "KIF should mark dropped pieces with 打");
+assert(kif.formatMove(dropRecord) === "５五歩打", "KIF should mark dropped pieces with 打");
 const promotedRecord = {
   drop: false,
   piece: "P",
@@ -152,26 +144,26 @@ const promotedRecord = {
   to: { row: 2, col: 4 },
 };
 assert(
-  engine.formatKifMove(promotedRecord, { to: { row: 2, col: 4 } }) === "同　歩成(54)",
+  kif.formatMove(promotedRecord, { to: { row: 2, col: 4 } }) === "同　歩成(54)",
   "KIF should represent same-square moves and promotions"
 );
-engine.resetGame(false);
-engine.makeMove({
+app.resetGame(false);
+app.makeMove({
   from: { row: 2, col: 4 },
   to: { row: 3, col: 4 },
   promote: false,
   player: engine.PLAYERS.CPU,
 });
-engine.state.winner = engine.PLAYERS.CPU;
-const cpuSenteKif = engine.generateKif();
+app.state.winner = engine.PLAYERS.CPU;
+const cpuSenteKif = kif.generate(app.state);
 assert(cpuSenteKif.includes("先手：CPU"), "KIF should identify CPU as sente when it starts");
 assert(
   cpuSenteKif.includes("   1 ５六歩(57)"),
   "KIF should rotate coordinates when CPU plays sente from the top"
 );
 assert(cpuSenteKif.includes("まで1手で先手の勝ち"), "KIF result should follow assigned sides");
-engine.resetGame(true);
-assert(engine.copyKifButton.hidden, "The KIF copy button should be hidden during a game");
+app.resetGame(true);
+assert(app.copyKifButton.hidden, "The KIF copy button should be hidden during a game");
 
 assert(engine.getDisplaySymbol({ piece: "S", promoted: true }) === "全", "Promoted silver should use 全");
 assert(engine.getDisplaySymbol({ piece: "N", promoted: true }) === "圭", "Promoted knight should use 圭");
@@ -179,22 +171,93 @@ assert(engine.getDisplaySymbol({ piece: "L", promoted: true }) === "杏", "Promo
 assert(engine.cpuJudgmentForScore(0).emoji === "😐", "An even position should show the neutral emoji");
 assert(engine.cpuJudgmentForScore(700).emoji === "🙂", "A CPU edge should show a positive emoji");
 assert(engine.cpuJudgmentForScore(-700).emoji === "😟", "A CPU deficit should show a worried emoji");
-assert(engine.getCpuThinkTimeMs(engine.state) === 2250, "An even position should use a random 2-3 second budget");
+assert(engine.getCpuThinkTimeMs(app.state) === 2250, "An even position should use a random 2-3 second budget");
 
-const initial = {
-  board: engine.createInitialBoard(),
-  hands: {
-    black: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
-    white: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
-  },
+const initial = engine.createPosition();
+
+const mandatoryPromotion = createBarePosition();
+mandatoryPromotion.board[1][4] = {
+  piece: "P",
+  owner: engine.PLAYERS.PLAYER,
+  promoted: false,
 };
-const cpuDisadvantage = {
+const lastRankPawnMoves = engine.generateLegalMoves(
+  mandatoryPromotion,
+  engine.PLAYERS.PLAYER
+).filter((move) => !move.drop && move.from.row === 1 && move.from.col === 4);
+assert(
+  lastRankPawnMoves.length === 1 && lastRankPawnMoves[0].promote,
+  "A pawn reaching the last rank must promote"
+);
+
+const knightPromotion = createBarePosition();
+knightPromotion.board[2][4] = {
+  piece: "N",
+  owner: engine.PLAYERS.PLAYER,
+  promoted: false,
+};
+const lastRankKnightMoves = engine.generateLegalMoves(
+  knightPromotion,
+  engine.PLAYERS.PLAYER
+).filter((move) => !move.drop && move.from.row === 2 && move.from.col === 4);
+assert(
+  lastRankKnightMoves.length === 2 && lastRankKnightMoves.every((move) => move.promote),
+  "A knight reaching the last rank must promote"
+);
+
+const pawnDropPosition = createBarePosition();
+pawnDropPosition.board[4][4] = {
+  piece: "P",
+  owner: engine.PLAYERS.PLAYER,
+  promoted: false,
+};
+pawnDropPosition.hands.black.P = 1;
+const pawnDrops = engine
+  .generateLegalMoves(pawnDropPosition, engine.PLAYERS.PLAYER)
+  .filter((move) => move.drop && move.piece === "P");
+assert(pawnDrops.length > 0, "A held pawn should have legal drop squares");
+assert(pawnDrops.every((move) => move.to.col !== 4), "A pawn cannot be dropped on a doubled file");
+assert(pawnDrops.every((move) => move.to.row !== 0), "A pawn cannot be dropped on the last rank");
+
+const capturePosition = createBarePosition();
+capturePosition.board[4][4] = {
+  piece: "S",
+  owner: engine.PLAYERS.PLAYER,
+  promoted: false,
+};
+capturePosition.board[3][4] = {
+  piece: "P",
+  owner: engine.PLAYERS.CPU,
+  promoted: true,
+};
+const captureMove = engine
+  .generateLegalMoves(capturePosition, engine.PLAYERS.PLAYER)
+  .find((move) => !move.drop && move.to.row === 3 && move.to.col === 4);
+const capturedPosition = engine.applyMove(capturePosition, captureMove);
+assert(capturedPosition.hands.black.P === 1, "A captured promoted piece returns to hand unpromoted");
+
+const promotedBishopPosition = createBarePosition();
+promotedBishopPosition.board[4][4] = {
+  piece: "B",
+  owner: engine.PLAYERS.PLAYER,
+  promoted: true,
+};
+const promotedBishopMoves = engine.generateLegalMoves(
+  promotedBishopPosition,
+  engine.PLAYERS.PLAYER
+);
+assert(
+  promotedBishopMoves.some((move) => !move.drop && move.to.row === 3 && move.to.col === 4),
+  "A promoted bishop can step orthogonally"
+);
+assert(
+  promotedBishopMoves.some((move) => !move.drop && move.to.row === 1 && move.to.col === 1),
+  "A promoted bishop keeps its diagonal slide"
+);
+
+const cpuDisadvantage = engine.createPosition({
   board: initial.board.map((row) => row.map((piece) => (piece ? { ...piece } : null))),
-  hands: {
-    black: { ...initial.hands.black },
-    white: { ...initial.hands.white },
-  },
-};
+});
 cpuDisadvantage.board[1][1] = null;
 assert(engine.getCpuThinkTimeMs(cpuDisadvantage) === 3000, "A CPU deficit should use a 3 second budget");
 
@@ -213,7 +276,7 @@ const cpuLegal = engine.generateLegalMoves(opening, engine.PLAYERS.CPU);
 const started = performance.now();
 const cpuMove = engine.chooseCpuMove(opening);
 const elapsed = performance.now() - started;
-const searchStats = engine.searchStats();
+const searchStats = engine.getSearchStats();
 assert(cpuMove, "CPU must find a move in the opening");
 assert(
   cpuLegal.some((move) => engine.moveKey(move) === engine.moveKey(cpuMove)),
@@ -225,10 +288,7 @@ assert(
 );
 assert(elapsed < 3500, `CPU exceeded the response budget: ${elapsed.toFixed(0)}ms`);
 
-const castleBase = {
-  board: engine.createInitialBoard(),
-  hands: initial.hands,
-};
+const castleBase = engine.createPosition();
 const rookPawnPosition = engine.applyMove(castleBase, {
   from: { row: 6, col: 7 },
   to: { row: 5, col: 7 },
@@ -252,10 +312,9 @@ assert(
   "Opening the bishop diagonal should be rewarded"
 );
 
-const exposedKingPosition = {
+const exposedKingPosition = engine.createPosition({
   board: castleBase.board.map((row) => row.map((piece) => (piece ? { ...piece } : null))),
-  hands: initial.hands,
-};
+});
 exposedKingPosition.board[7][4] = exposedKingPosition.board[8][4];
 exposedKingPosition.board[8][4] = null;
 assert(
@@ -264,10 +323,9 @@ assert(
   "Walking the king forward in the opening should be discouraged"
 );
 
-const castlePosition = {
+const castlePosition = engine.createPosition({
   board: castleBase.board.map((row) => row.map((piece) => (piece ? { ...piece } : null))),
-  hands: initial.hands,
-};
+});
 castlePosition.board[8][4] = null;
 castlePosition.board[7][4] = castlePosition.board[8][1];
 castlePosition.board[8][1] = { piece: "K", owner: engine.PLAYERS.PLAYER, promoted: false };
@@ -279,32 +337,24 @@ assert(
   "A king protected near the edge by generals and pawns should be rewarded"
 );
 
-const emptyBoard = Array.from({ length: 9 }, () => Array(9).fill(null));
+const emptyBoard = engine.createEmptyBoard();
 emptyBoard[8][4] = { piece: "K", owner: engine.PLAYERS.PLAYER, promoted: false };
 emptyBoard[0][4] = { piece: "K", owner: engine.PLAYERS.CPU, promoted: false };
 emptyBoard[7][4] = { piece: "R", owner: engine.PLAYERS.CPU, promoted: false };
-const matePosition = {
+const matePosition = engine.createPosition({
   board: emptyBoard,
-  hands: {
-    black: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
-    white: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
-  },
-};
+});
 const winningMove = engine.chooseCpuMove(matePosition);
 assert(winningMove.to.row === 8 && winningMove.to.col === 4, "CPU must take an immediate win");
 
-const tacticalBoard = Array.from({ length: 9 }, () => Array(9).fill(null));
+const tacticalBoard = engine.createEmptyBoard();
 tacticalBoard[8][8] = { piece: "K", owner: engine.PLAYERS.PLAYER, promoted: false };
 tacticalBoard[0][0] = { piece: "K", owner: engine.PLAYERS.CPU, promoted: false };
 tacticalBoard[4][4] = { piece: "R", owner: engine.PLAYERS.PLAYER, promoted: false };
 tacticalBoard[3][3] = { piece: "B", owner: engine.PLAYERS.CPU, promoted: false };
-const tacticalPosition = {
+const tacticalPosition = engine.createPosition({
   board: tacticalBoard,
-  hands: {
-    black: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
-    white: { P: 0, L: 0, N: 0, S: 0, G: 0, B: 0, R: 0 },
-  },
-};
+});
 const tacticalMove = engine.chooseCpuMove(tacticalPosition);
 assert(tacticalMove.to.row === 4 && tacticalMove.to.col === 4, "CPU must take a free rook");
 
