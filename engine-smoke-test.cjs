@@ -147,6 +147,30 @@ assert(
   kif.formatMove(promotedRecord, { to: { row: 2, col: 4 } }) === "同　歩成(54)",
   "KIF should represent same-square moves and promotions"
 );
+
+const alreadyPromotedPosition = createBarePosition();
+alreadyPromotedPosition.board[0][7] = {
+  piece: "P",
+  owner: engine.PLAYERS.PLAYER,
+  promoted: true,
+};
+const alreadyPromotedMove = engine
+  .generateMovesForPiece(alreadyPromotedPosition, 0, 7, engine.PLAYERS.PLAYER)
+  .find((move) => move.to.row === 0 && move.to.col === 8);
+assert(alreadyPromotedMove, "A promoted pawn should be able to move sideways on the last rank");
+assert(!alreadyPromotedMove.promote, "An already promoted piece must not promote again");
+assert(
+  kif.formatMove(kif.createMoveRecord(alreadyPromotedPosition, alreadyPromotedMove)) ===
+    "１一と(21)",
+  "KIF should not append 成 to an already promoted piece"
+);
+assert(
+  kif.formatMove({
+    ...kif.createMoveRecord(alreadyPromotedPosition, alreadyPromotedMove),
+    promote: true,
+  }) === "１一と(21)",
+  "KIF formatting should reject contradictory repeat-promotion data"
+);
 app.resetGame(false);
 app.makeMove({
   from: { row: 2, col: 4 },

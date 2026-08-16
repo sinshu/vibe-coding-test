@@ -53,7 +53,7 @@
     const symbol = record.wasPromoted
       ? PROMOTED_SYMBOLS[record.piece]
       : PIECE_SYMBOLS[record.piece];
-    const qualifier = record.drop ? "打" : record.promote ? "成" : "";
+    const qualifier = record.drop ? "打" : record.promote && !record.wasPromoted ? "成" : "";
     const originSquare = record.drop
       ? null
       : rotateBoard

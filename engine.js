@@ -475,7 +475,10 @@ function generateMovesForPiece(stateSnapshot, row, col, owner) {
     if (!inBounds(toRow, toCol)) return;
     const target = stateSnapshot.board[toRow][toCol];
     if (target && target.owner === owner) return;
-    const mandatory = isPromotionMandatory(base, owner, toRow);
+    // A piece that is already promoted must never be offered another
+    // promotion, even when it moves to a rank where its base piece would
+    // otherwise have to promote.
+    const mandatory = !piece.promoted && isPromotionMandatory(base, owner, toRow);
     const canPromote = promotionAvailable(base, owner, row, toRow, piece.promoted);
 
     if (mandatory) {
