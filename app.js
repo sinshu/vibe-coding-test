@@ -4,6 +4,7 @@ const {
   PIECE_SYMBOLS,
   createPosition,
   createPieceValueProfile,
+  createHandPieceBonusRate,
   getDisplaySymbol,
   generateMovesForPiece,
   generateDropMoves,
@@ -16,6 +17,8 @@ const {
 } = ShogiEngine;
 
 const LARGE_PIECES = new Set(["B", "R", "K"]);
+const VALUE_DISPLAY_PIECES = ["P", "L", "N", "S", "G", "B", "R"];
+const PROMOTED_VALUE_DISPLAY_PIECES = ["P", "L", "N", "S", "B", "R"];
 
 const state = {
   ...createPosition({ board: [] }),
@@ -50,6 +53,7 @@ function createGameState(playerStarts, boardFlipped, gameId) {
     ...createPosition({
       pieceValues: pieceValueProfile.pieces,
       promotedPieceValues: pieceValueProfile.promoted,
+      handPieceBonusRate: createHandPieceBonusRate(),
     }),
     currentPlayer: playerStarts ? PLAYERS.PLAYER : PLAYERS.CPU,
     playerStarts,
@@ -105,12 +109,34 @@ function getCpuJudgment() {
   return cpuJudgmentForScore(-evaluate(state));
 }
 
+function formatPieceValues(pieces, promoted = false) {
+  return pieces
+    .map((piece) => {
+      const symbol = getDisplaySymbol({ piece, promoted });
+      const values = promoted ? state.promotedPieceValues : state.pieceValues;
+      return `${symbol}${values[piece]}`;
+    })
+    .join("、");
+}
+
+function getRandomParameterDescription() {
+  const handBonusPercent = (state.handPieceBonusRate * 100)
+    .toFixed(1)
+    .replace(/\.0$/, "");
+  return [
+    "対局パラメータ",
+    `駒価値：${formatPieceValues(VALUE_DISPLAY_PIECES)}`,
+    `成駒価値：${formatPieceValues(PROMOTED_VALUE_DISPLAY_PIECES, true)}`,
+    `持ち駒加点：+${handBonusPercent}%`,
+  ].join("\n");
+}
+
 function renderCpuJudgment() {
   const judgment = getCpuJudgment();
   const description = `CPUの形勢判断：${judgment.label}`;
   cpuEvaluationEmojiEl.textContent = judgment.emoji;
   cpuEvaluationEl.setAttribute("aria-label", description);
-  cpuEvaluationEl.title = description;
+  cpuEvaluationEl.title = `${description}\n${getRandomParameterDescription()}`;
 }
 
 function makeMove(move) {

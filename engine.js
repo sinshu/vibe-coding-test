@@ -44,6 +44,9 @@ const PROMOTED_VALUES = {
 };
 const HAND_PIECES = ["P", "L", "N", "S", "G", "B", "R"];
 const PIECE_VALUE_VARIANCE = 0.3;
+const HAND_PIECE_BONUS_MIN = 0.05;
+const HAND_PIECE_BONUS_MAX = 0.15;
+const DEFAULT_HAND_PIECE_BONUS = 0.1;
 
 const MATE_SCORE = 100000;
 const DRAW_SCORE = 0;
@@ -153,8 +156,9 @@ function createPosition({
   hands = createEmptyHands(),
   pieceValues = PIECE_VALUES,
   promotedPieceValues = PROMOTED_VALUES,
+  handPieceBonusRate = DEFAULT_HAND_PIECE_BONUS,
 } = {}) {
-  return { board, hands, pieceValues, promotedPieceValues };
+  return { board, hands, pieceValues, promotedPieceValues, handPieceBonusRate };
 }
 
 function cloneBoard(board) {
@@ -204,6 +208,11 @@ function createPieceValueProfile(random = Math.random) {
   }
 
   return { pieces, promoted };
+}
+
+function createHandPieceBonusRate(random = Math.random) {
+  return HAND_PIECE_BONUS_MIN +
+    random() * (HAND_PIECE_BONUS_MAX - HAND_PIECE_BONUS_MIN);
 }
 
 function inBounds(row, col) {
@@ -323,6 +332,7 @@ function applyMove(currentState, move) {
     hands: nextHands,
     pieceValues: currentState.pieceValues,
     promotedPieceValues: currentState.promotedPieceValues,
+    handPieceBonusRate: currentState.handPieceBonusRate,
   };
 }
 
@@ -359,6 +369,7 @@ function applySearchMove(currentState, move) {
     hands: nextHands,
     pieceValues: currentState.pieceValues,
     promotedPieceValues: currentState.promotedPieceValues,
+    handPieceBonusRate: currentState.handPieceBonusRate,
   };
 }
 
@@ -792,8 +803,9 @@ function evaluate(stateSnapshot) {
     }
   }
 
+  const handFactor = 1 +
+    (stateSnapshot.handPieceBonusRate ?? DEFAULT_HAND_PIECE_BONUS);
   for (const piece of HAND_PIECES) {
-    const handFactor = piece === "B" || piece === "R" ? 1.05 : 0.92;
     const value = getBasePieceValue(piece, stateSnapshot);
     total += stateSnapshot.hands.black[piece] * value * handFactor;
     total -= stateSnapshot.hands.white[piece] * value * handFactor;
@@ -1187,6 +1199,7 @@ globalScope.ShogiEngine = Object.freeze({
   createEmptyHands,
   createPosition,
   createPieceValueProfile,
+  createHandPieceBonusRate,
   getDisplaySymbol,
   generateMovesForPiece,
   generateDropMoves,

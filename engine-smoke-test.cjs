@@ -16,9 +16,11 @@ function element() {
   };
 }
 
+const elements = new Map();
 const document = {
-  getElementById() {
-    return element();
+  getElementById(id) {
+    if (!elements.has(id)) elements.set(id, element());
+    return elements.get(id);
   },
   createElement() {
     return element();
@@ -48,6 +50,15 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+const cpuEvaluation = document.getElementById("cpu-evaluation");
+assert(
+  cpuEvaluation.title.includes("対局パラメータ") &&
+    cpuEvaluation.title.includes("駒価値：歩") &&
+    cpuEvaluation.title.includes("成駒価値：と") &&
+    cpuEvaluation.title.includes("持ち駒加点：+7.5%"),
+  "Hovering over the CPU face should show the game's randomized parameters"
+);
+
 function createBarePosition() {
   const board = engine.createEmptyBoard();
   board[8][0] = { piece: "K", owner: engine.PLAYERS.PLAYER, promoted: false };
@@ -76,14 +87,24 @@ assert(
   "Different games should be able to value the bishop differently"
 );
 assert(cautiousRookProfile.pieces.K === 10000, "The king value must never be randomized");
+assert(
+  engine.createHandPieceBonusRate(() => 0) === 0.05 &&
+    engine.createHandPieceBonusRate(() => 1) === 0.15,
+  "A game's hand-piece bonus should be randomized between 5% and 15%"
+);
 const profiledPosition = engine.createPosition({
   pieceValues: cautiousRookProfile.pieces,
   promotedPieceValues: cautiousRookProfile.promoted,
+  handPieceBonusRate: 0.14,
 });
 const profiledMove = engine.generateLegalMoves(profiledPosition, engine.PLAYERS.PLAYER)[0];
 assert(
   engine.applyMove(profiledPosition, profiledMove).pieceValues === cautiousRookProfile.pieces,
   "A game's piece values should remain fixed while searching future positions"
+);
+assert(
+  engine.applyMove(profiledPosition, profiledMove).handPieceBonusRate === 0.14,
+  "A game's hand-piece bonus should remain fixed while searching future positions"
 );
 
 app.onSquareClick(6, 4);
@@ -198,6 +219,14 @@ assert(engine.cpuJudgmentForScore(-700).emoji === "😟", "A CPU deficit should 
 assert(engine.getCpuThinkTimeMs(app.state) === 2250, "An even position should use a random 2-3 second budget");
 
 const initial = engine.createPosition();
+
+const handBonusPosition = createBarePosition();
+const handBonusBaseScore = engine.evaluate(handBonusPosition);
+handBonusPosition.hands.black.P = 1;
+assert(
+  Math.abs(engine.evaluate(handBonusPosition) - handBonusBaseScore - 110) < 1e-9,
+  "A held piece should receive the default 10% bonus"
+);
 
 const mandatoryPromotion = createBarePosition();
 mandatoryPromotion.board[1][4] = {
