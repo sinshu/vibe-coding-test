@@ -58,9 +58,12 @@ const QUIESCENCE_DEPTH = 5;
 const TRANSPOSITION_TABLE_LIMIT = 60000;
 const CHECK_BONUS = 95;
 const MOBILITY_WEIGHT = 2;
+const POSITION_HISTORY_LIMIT = 32;
+const LOSING_REPETITION_WEIGHT = 1.5;
+const LOSING_REPETITION_LIMIT = 3000;
 
 const SEARCH_TIMEOUT = Symbol("search-timeout");
-let latestSearchStats = { searchedNodes: 0, deepestTableEntry: 0 };
+let latestSearchStats = { completedDepth: 0, searchedNodes: 0, deepestTableEntry: 0 };
 
 const ORTHOGONAL_DIRECTIONS = [
   [1, 0],
@@ -848,7 +851,7 @@ function moveKey(move) {
   return `${move.from.row}${move.from.col}${move.to.row}${move.to.col}${move.promote ? "+" : "-"}`;
 }
 
-function positionKey(stateSnapshot, currentPlayer) {
+function boardPositionKey(stateSnapshot, currentPlayer) {
   let key = currentPlayer === PLAYERS.PLAYER ? "b|" : "w|";
   for (let row = 0; row < SIZE; row++) {
     for (let col = 0; col < SIZE; col++) {
@@ -858,7 +861,11 @@ function positionKey(stateSnapshot, currentPlayer) {
         : ".";
     }
   }
-  key += "|";
+  return key;
+}
+
+function positionKey(stateSnapshot, currentPlayer) {
+  let key = boardPositionKey(stateSnapshot, currentPlayer) + "|";
   for (const owner of [PLAYERS.PLAYER, PLAYERS.CPU]) {
     for (const piece of Object.keys(stateSnapshot.hands[owner])) {
       key += stateSnapshot.hands[owner][piece].toString(36);
@@ -868,13 +875,79 @@ function positionKey(stateSnapshot, currentPlayer) {
   return key;
 }
 
+function createPositionRecord(stateSnapshot, currentPlayer) {
+  const handFactor = 1 +
+    (stateSnapshot.handPieceBonusRate ?? DEFAULT_HAND_PIECE_BONUS);
+  let handBalance = 0;
+  for (const piece of HAND_PIECES) {
+    handBalance +=
+      (stateSnapshot.hands.black[piece] - stateSnapshot.hands.white[piece]) *
+      getBasePieceValue(piece, stateSnapshot) * handFactor;
+  }
+  return { boardKey: boardPositionKey(stateSnapshot, currentPlayer), handBalance };
+}
+
+function losingRepetitionPenalty(nextState, searchContext) {
+  // This is a progress heuristic, not a repetition/draw rule: hands still
+  // belong in the transposition key, since they change the legal moves.
+  const record = createPositionRecord(nextState, PLAYERS.PLAYER);
+  const previousBalance = searchContext.previousHandBalances.get(record.boardKey);
+  if (previousBalance === undefined) return 0;
+  return Math.min(
+    LOSING_REPETITION_LIMIT,
+    Math.max(0, record.handBalance - previousBalance) * LOSING_REPETITION_WEIGHT
+  );
+}
+
+function legalCapturesOnSquare(stateSnapshot, player, row, col) {
+  const captures = [];
+  for (let fromRow = 0; fromRow < SIZE; fromRow++) {
+    for (let fromCol = 0; fromCol < SIZE; fromCol++) {
+      const piece = stateSnapshot.board[fromRow][fromCol];
+      if (!piece || piece.owner !== player) continue;
+      if (!pieceAttacksSquare(stateSnapshot.board, fromRow, fromCol, piece, row, col)) continue;
+      const move = {
+        from: { row: fromRow, col: fromCol },
+        to: { row, col },
+        player,
+        promote: promotionAvailable(piece.piece, player, fromRow, row, piece.promoted),
+      };
+      const afterCapture = applySearchMove(stateSnapshot, move);
+      if (!isKingInCheck(afterCapture, player)) captures.push(afterCapture);
+    }
+  }
+  return captures;
+}
+
+function unansweredPawnCaptures(nextState, move) {
+  const pawn = nextState.board[move.to.row][move.to.col];
+  if (pawn.piece !== "P" || pawn.promoted) return [];
+  const captures = legalCapturesOnSquare(
+    nextState, opponentOf(move.player), move.to.row, move.to.col
+  );
+  // Read one additional full ply when the opponent can take the pawn
+  // without an immediate recapture. Quiescence alone cannot read the
+  // subsequent pawn drops and quiet moves that chase a piece in circles.
+  return captures.filter((afterCapture) =>
+    legalCapturesOnSquare(afterCapture, move.player, move.to.row, move.to.col).length === 0
+  );
+}
+
 function createSearchContext(stateSnapshot) {
+  const previousHandBalances = new Map();
+  for (const record of (stateSnapshot.positionHistory || []).slice(-POSITION_HISTORY_LIMIT)) {
+    const balance = previousHandBalances.get(record.boardKey);
+    if (balance === undefined || record.handBalance < balance) {
+      previousHandBalances.set(record.boardKey, record.handBalance);
+    }
+  }
   return {
     deadline: performance.now() + getCpuThinkTimeMs(stateSnapshot),
     searchedNodes: 0,
     transpositionTable: new Map(),
     killerMoves: [],
     historyScores: new Map(),
+    previousHandBalances,
   };
 }
 
@@ -1114,14 +1187,32 @@ function chooseCpuMove(stateSnapshot) {
 
   const searchContext = createSearchContext(stateSnapshot);
   rootMoves = orderMoves(stateSnapshot, rootMoves, PLAYERS.CPU, 0, searchContext);
+  const inCheck = isKingInCheck(stateSnapshot, PLAYERS.CPU);
+  const rootDetails = new Map(rootMoves.map((move) => {
+    const nextState = applySearchMove(stateSnapshot, move);
+    const penalty = inCheck || isKingInCheck(nextState, PLAYERS.PLAYER)
+      ? 0 : losingRepetitionPenalty(nextState, searchContext);
+    const pawnCaptures = unansweredPawnCaptures(nextState, move);
+    // The emergency fallback must also see a pawn being taken, rather
+    // than rewarding only its advancement before the opponent responds.
+    const fallbackScore = pawnCaptures.reduce(
+      (score, afterCapture) => Math.max(score, evaluate(afterCapture)),
+      evaluate(nextState)
+    );
+    return [moveKey(move), {
+      nextState, penalty, fallbackScore, extension: pawnCaptures.length > 0 ? 1 : 0,
+    }];
+  }));
 
   // Complete a cheap one-position scan first, so even a very slow device
   // gets a positionally sensible fallback before deeper search starts.
   let completedBestMove = rootMoves[0];
   let completedBestScore = Infinity;
+  let completedDepth = 0;
   let previousScores = new Map();
   for (const move of rootMoves) {
-    const score = evaluate(applySearchMove(stateSnapshot, move));
+    const { fallbackScore, penalty } = rootDetails.get(moveKey(move));
+    const score = fallbackScore + penalty;
     previousScores.set(moveKey(move), score);
     if (score < completedBestScore) {
       completedBestScore = score;
@@ -1146,15 +1237,20 @@ function chooseCpuMove(stateSnapshot) {
     try {
       let beta = Infinity;
       for (const move of rootMoves) {
-        const score = alphaBeta(
-          applySearchMove(stateSnapshot, move),
-          depth - 1,
+        const { nextState, penalty, extension } = rootDetails.get(moveKey(move));
+        const rawScore = alphaBeta(
+          nextState,
+          depth - 1 + extension,
           PLAYERS.PLAYER,
           -Infinity,
-          beta,
+          // Penalised candidates need an exact result so a bound shifted
+          // by the heuristic cannot hide a forced mate or useful sacrifice.
+          penalty > 0 ? Infinity : beta,
           1,
           searchContext
         );
+        const score = Math.abs(rawScore) >= MATE_SCORE - 100
+          ? rawScore : rawScore + penalty;
         iterationScores.set(moveKey(move), score);
         if (score < iterationBestScore) {
           iterationBestScore = score;
@@ -1168,6 +1264,7 @@ function chooseCpuMove(stateSnapshot) {
     }
 
     if (iterationBestMove) {
+      completedDepth = depth;
       completedBestMove = iterationBestMove;
       completedBestScore = iterationBestScore;
       previousScores = iterationScores;
@@ -1177,6 +1274,7 @@ function chooseCpuMove(stateSnapshot) {
   }
 
   latestSearchStats = {
+    completedDepth,
     searchedNodes: searchContext.searchedNodes,
     deepestTableEntry: Math.max(
       0,
@@ -1198,6 +1296,7 @@ globalScope.ShogiEngine = Object.freeze({
   createInitialBoard,
   createEmptyHands,
   createPosition,
+  createPositionRecord,
   createPieceValueProfile,
   createHandPieceBonusRate,
   getDisplaySymbol,

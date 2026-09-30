@@ -3,6 +3,7 @@ const {
   PLAYERS,
   PIECE_SYMBOLS,
   createPosition,
+  createPositionRecord,
   createPieceValueProfile,
   createHandPieceBonusRate,
   getDisplaySymbol,
@@ -30,6 +31,7 @@ const state = {
   winner: null,
   lastMove: null,
   moveHistory: [],
+  positionHistory: [],
   startedAt: new Date(),
   boardFlipped: false,
 };
@@ -63,6 +65,7 @@ function createGameState(playerStarts, boardFlipped, gameId) {
     winner: null,
     lastMove: null,
     moveHistory: [],
+    positionHistory: [],
     startedAt: new Date(),
     boardFlipped,
   };
@@ -142,6 +145,8 @@ function renderCpuJudgment() {
 function makeMove(move) {
   const record = ShogiKif.createMoveRecord(state, move);
   const applied = applyMove(state, move);
+  state.positionHistory.push(createPositionRecord(state, state.currentPlayer));
+  if (state.positionHistory.length > 32) state.positionHistory.shift();
   state.lastMove = move.drop
     ? {
         drop: true,

@@ -136,6 +136,7 @@ app.makeMove({
   player: engine.PLAYERS.PLAYER,
 });
 assert(app.state.moveHistory.length === 1, "Played moves should be recorded for KIF export");
+assert(app.state.positionHistory.length === 1, "Played positions should be available to the AI");
 app.state.winner = engine.PLAYERS.PLAYER;
 app.render();
 assert(!app.copyKifButton.hidden, "The KIF copy button should appear after the game");
@@ -209,6 +210,7 @@ assert(
 assert(cpuSenteKif.includes("まで1手で先手の勝ち"), "KIF result should follow assigned sides");
 app.resetGame(true);
 assert(app.copyKifButton.hidden, "The KIF copy button should be hidden during a game");
+assert(app.state.positionHistory.length === 0, "Restarting must discard the previous game's positions");
 
 assert(engine.getDisplaySymbol({ piece: "S", promoted: true }) === "全", "Promoted silver should use 全");
 assert(engine.getDisplaySymbol({ piece: "N", promoted: true }) === "圭", "Promoted knight should use 圭");
