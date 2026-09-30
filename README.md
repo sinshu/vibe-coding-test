@@ -2,7 +2,7 @@
 
 ## 今すぐプレイ
 
-[ブラウザで将棋AIに挑戦する](https://sinshu.github.io/vibe-coding-test/)
+## [ブラウザで将棋AIに挑戦する！](https://sinshu.github.io/vibe-coding-test/)
 
 ## 遊び方
 
